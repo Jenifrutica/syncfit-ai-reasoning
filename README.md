@@ -54,6 +54,23 @@ The source document defines a test script that simulates telemetry, applies the 
 
 Python 3.11+, OpenAI Python SDK (DeepSeek endpoint), Pydantic for validation.
 
+## Tasks
+
+> **Language: Python 3.11+ (mandatory).**
+
+### Requirements
+
+- [ ] Integrate DeepSeek-V3 / DeepSeek-Coder via the OpenAI-compatible Python SDK.
+- [ ] Implement the deterministic system prompt (temperature 0.1, analytical engine, not a chatbot).
+- [ ] Enforce JSON Mode and validate the output against `syncfit-contracts`.
+- [ ] Implement the biomechanical rule engine (block high-risk exercises in the ovulatory phase and advanced pregnancy; block supine exercises from week 16).
+- [ ] Preserve the numeric `k_load` computed by `syncfit-core` without alteration.
+- [ ] Implement the **Priority Queue** for audit jobs.
+- [ ] Implement the **LRU Cache** for repeated inferences.
+- [ ] Implement the local quantized fallback (DeepSeek-R1-Distill / Qwen 2.5).
+- [ ] Add the reference test pipeline from the source document.
+- [ ] Write integration tests with schema validation.
+
 ## Related repositories
 
 - [`syncfit-contracts`](../syncfit-contracts) — output schema.
