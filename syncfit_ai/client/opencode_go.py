@@ -8,6 +8,7 @@ a dedicated user agent and a stable session id, as OpenCode Go recommends.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from ..config import ReasoningConfig
@@ -15,6 +16,11 @@ from ..config import ReasoningConfig
 
 class OpenCodeGoError(RuntimeError):
     """Raised when the OpenCode Go call fails or returns invalid JSON."""
+
+
+def _is_response_format_error(exc: Exception) -> bool:
+    """True only when the endpoint rejected the response_format parameter."""
+    return "response_format" in str(exc).lower()
 
 
 class OpenCodeGoClient:
@@ -52,13 +58,16 @@ class OpenCodeGoClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        extra_headers = {"x-opencode-session": session_id} if session_id else None
+        # OpenCode Go requires a stable session id for routing and caching.
+        extra_headers = {"x-opencode-session": session_id or str(uuid.uuid4())}
 
         try:
             response = self._create(messages, extra_headers, json_mode=True)
-        except Exception:
-            # Some OpenAI-compatible endpoints reject response_format; retry
-            # without it and rely on the deterministic rule engine + validation.
+        except Exception as exc:
+            # Only retry when the endpoint rejected response_format. Any other
+            # error (auth, model, network) must surface to the caller.
+            if not _is_response_format_error(exc):
+                raise
             response = self._create(messages, extra_headers, json_mode=False)
 
         content = response.choices[0].message.content

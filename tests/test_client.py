@@ -77,6 +77,25 @@ def test_complete_invalid_json_raises():
         client.complete("system", "user")
 
 
+def test_auth_error_is_not_swallowed():
+    completions = _Completions("{}", fail_json_mode=False)
+    completions.create = lambda **kwargs: (_ for _ in ()).throw(
+        RuntimeError("Invalid API key")
+    )
+    client = OpenCodeGoClient(
+        config=ReasoningConfig(api_key="bad"), client=_FakeOpenAI(completions)
+    )
+    with pytest.raises(RuntimeError, match="Invalid API key"):
+        client.complete("system", "user")
+
+
+def test_session_id_is_generated_when_missing():
+    client, completions = make_client(json.dumps({"ok": True}))
+    client.complete("system", "user")
+    session = completions.calls[0]["extra_headers"]["x-opencode-session"]
+    assert isinstance(session, str) and len(session) >= 32
+
+
 def test_missing_api_key_raises():
     with pytest.raises(OpenCodeGoError):
         OpenCodeGoClient(config=ReasoningConfig(api_key=None))

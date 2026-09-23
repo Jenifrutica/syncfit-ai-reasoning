@@ -65,9 +65,15 @@ prescription = auditor.audit(request)  # syncfit_contracts.AIReasoningResponse
 
 ```bash
 export REASONING_API_KEY="<your OpenCode Go key>"
-python examples/reference_pipeline.py            # real call to OpenCode Go
+python examples/check_connection.py         # verify key, endpoint and model
+python examples/reference_pipeline.py        # real call to OpenCode Go
 python examples/reference_pipeline.py --offline  # deterministic FakeClient, no network
 ```
+
+> OpenCode Go requires the `x-opencode-session` header for routing; the client
+> always sends one (generated when no session id is provided). Only a
+> `response_format` rejection is retried; authentication and other errors are
+> surfaced immediately.
 
 ## Data Structures
 
