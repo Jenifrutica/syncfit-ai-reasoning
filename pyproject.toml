@@ -17,6 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+simulator = [
+    "syncfit-simulator @ git+https://github.com/Jenifrutica/syncfit-simulator.git#subdirectory=py",
+]
 dev = [
     "pytest>=8.0",
 ]

@@ -25,8 +25,9 @@ Guarantee clinical reliability by **never** delegating the mathematical calculat
 
 - **`syncfit-core`** (dependency): supplies the deterministic `EngineResult` (phase, fatigue probability, fatigue level and `k_load`) that the kernel audits. `AuditRequest` wraps a `syncfit_core.EngineResult`.
 - **`syncfit-contracts`** (dependency): provides the `AIReasoningResponse` model that every output is validated against.
+- **`syncfit-simulator`** (optional, `[simulator]`): generates contract-valid telemetry and runs it through the core engine, so the reasoning kernel can be exercised with simulated data while the hardware is being built. See `examples/simulated_session.py`.
 
-Both are declared as git dependencies in `pyproject.toml`, so installing this package wires the whole chain.
+All are declared as git dependencies in `pyproject.toml`, so installing this package wires the whole chain.
 
 ## Configuration
 
@@ -81,6 +82,16 @@ python examples/reference_pipeline.py            # real call to OpenCode
 python examples/reference_pipeline.py --offline  # deterministic FakeClient, no network
 # force a product:
 REASONING_PRODUCT=zen python examples/check_connection.py
+```
+
+### Full chain with the simulator
+
+Runs simulated telemetry through the simulator, the core engine and the reasoning
+kernel (requires `pip install -e ".[simulator]"`):
+
+```bash
+python examples/simulated_session.py --scenario high_risk --offline  # no network
+python examples/simulated_session.py --scenario high_risk            # real OpenCode call
 ```
 
 > OpenCode requires the `x-opencode-session` header for routing; the client
@@ -141,6 +152,7 @@ Python 3.11+, OpenAI Python SDK (OpenCode Go endpoint), Pydantic v2, `syncfit-co
 
 - [`syncfit-contracts`](https://github.com/Jenifrutica/syncfit-contracts) — output schema (`AIReasoningResponse`).
 - [`syncfit-core`](https://github.com/Jenifrutica/syncfit-core) — supplies phase, fatigue and `k_load`.
+- [`syncfit-simulator`](https://github.com/Jenifrutica/syncfit-simulator) — simulated telemetry while the hardware is built.
 - [`syncfit-backend`](https://github.com/Jenifrutica/syncfit-backend) — orchestrates this service.
 
 All code, comments, documentation and commits in this repository are written in English.
