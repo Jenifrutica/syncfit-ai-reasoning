@@ -99,6 +99,31 @@ python examples/simulated_session.py --scenario high_risk            # real Open
 > `response_format` rejection is retried; authentication and other errors are
 > surfaced immediately.
 
+### Routine generation by muscle group (i18n)
+
+Builds a routine for one or more muscle groups (isolated, region or pattern),
+localized in English (default), Spanish or Chinese. The model chooses exercise
+ids from the shared catalog; the deterministic layer enriches each entry with a
+localized name/description and a free-use `image_url`, and enforces the safety
+rules.
+
+```bash
+python examples/generate_routine.py --groups GLUTES,QUADRICEPS --language ES --offline
+python examples/generate_routine.py --groups UPPER_BODY --language ZH
+python examples/generate_routine.py --groups FULL_LEG --phase OVULATORY   # blocks high impact
+```
+
+```python
+from syncfit_ai import RoutinePlanner, OpenCodeGoClient
+from syncfit_contracts import RoutineRequest
+
+request = RoutineRequest(muscle_groups=["GLUTES", "QUADRICEPS"], language="ES")
+routine = RoutinePlanner(OpenCodeGoClient()).plan(request, core_result)  # RoutineResponse
+```
+
+`RoutinePlanner.plan_offline(request, core_result)` builds the same shape without
+any model call.
+
 ## Data Structures
 
 | Structure | Complexity | Purpose |
