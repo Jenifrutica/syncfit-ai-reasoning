@@ -30,15 +30,27 @@ Both are declared as git dependencies in `pyproject.toml`, so installing this pa
 
 ## Configuration
 
+OpenCode Go and OpenCode Zen are two OpenAI-compatible products that **share the
+same account key**. The product is chosen by configuration, not by the key, so a
+unified key works on either endpoint. DeepSeek V4.1 Flash is available on both.
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `REASONING_API_KEY` | — | OpenCode Go API key (falls back to `OPENCODE_API_KEY`) |
-| `REASONING_BASE_URL` | `https://opencode.ai/zen/go/v1` | OpenAI-compatible endpoint |
+| `REASONING_API_KEY` | — | OpenCode account key (falls back to `OPENCODE_API_KEY`) |
+| `REASONING_PRODUCT` | `go` | `go` or `zen`; selects the endpoint |
+| `REASONING_AUTO_PRODUCT_FALLBACK` | `true` | If the product rejects the key, try the other product |
+| `REASONING_BASE_URL` | product endpoint | Explicit endpoint override |
 | `REASONING_MODEL` | `deepseek-v4.1-flash` | Model id |
 | `REASONING_TEMPERATURE` | `0.1` | Deterministic temperature |
 | `REASONING_TIMEOUT` | `60` | Request timeout (seconds) |
 
-The API key is read from the environment and is never stored in the repository.
+The key is read from (1) the environment, (2) a local `.env` file, in that order.
+It is never stored in the repository.
+
+```bash
+cp .env.example .env
+# edit .env and set REASONING_API_KEY=...
+```
 
 ## Usage
 
@@ -64,13 +76,14 @@ prescription = auditor.audit(request)  # syncfit_contracts.AIReasoningResponse
 ### Reference pipeline
 
 ```bash
-export REASONING_API_KEY="<your OpenCode Go key>"
-python examples/check_connection.py         # verify key, endpoint and model
-python examples/reference_pipeline.py        # real call to OpenCode Go
+python examples/check_connection.py              # verify key, product and model
+python examples/reference_pipeline.py            # real call to OpenCode
 python examples/reference_pipeline.py --offline  # deterministic FakeClient, no network
+# force a product:
+REASONING_PRODUCT=zen python examples/check_connection.py
 ```
 
-> OpenCode Go requires the `x-opencode-session` header for routing; the client
+> OpenCode requires the `x-opencode-session` header for routing; the client
 > always sends one (generated when no session id is provided). Only a
 > `response_format` rejection is retried; authentication and other errors are
 > surfaced immediately.

@@ -99,3 +99,44 @@ def test_session_id_is_generated_when_missing():
 def test_missing_api_key_raises():
     with pytest.raises(OpenCodeGoError):
         OpenCodeGoClient(config=ReasoningConfig(api_key=None))
+
+
+class _AuthError(Exception):
+    def __init__(self, message: str = "Unauthorized") -> None:
+        super().__init__(message)
+        self.status_code = 401
+
+
+def make_factory(json_content, fail_urls):
+    used = []
+
+    def factory(base_url):
+        used.append(base_url)
+        completions = _Completions(json_content)
+        if base_url in fail_urls:
+            completions.create = lambda **kwargs: (_ for _ in ()).throw(_AuthError())
+        return _FakeOpenAI(completions)
+
+    return factory, used
+
+
+def test_product_fallback_on_auth_error():
+    from syncfit_ai.config import PRODUCT_BASE_URLS
+
+    factory, used = make_factory(json.dumps({"ok": True}), {PRODUCT_BASE_URLS["go"]})
+    client = OpenCodeGoClient(config=ReasoningConfig(api_key="k"), client_factory=factory)
+    result = client.complete("system", "user")
+    assert result == {"ok": True}
+    assert used == [PRODUCT_BASE_URLS["go"], PRODUCT_BASE_URLS["zen"]]
+    assert client.last_product_base_url == PRODUCT_BASE_URLS["zen"]
+
+
+def test_no_fallback_when_disabled():
+    from syncfit_ai.config import PRODUCT_BASE_URLS
+
+    factory, used = make_factory(json.dumps({"ok": True}), {PRODUCT_BASE_URLS["go"]})
+    config = ReasoningConfig(api_key="k", auto_product_fallback=False)
+    client = OpenCodeGoClient(config=config, client_factory=factory)
+    with pytest.raises(_AuthError):
+        client.complete("system", "user")
+    assert used == [PRODUCT_BASE_URLS["go"]]
