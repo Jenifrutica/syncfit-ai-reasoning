@@ -6,6 +6,7 @@ OpenCode Go (DeepSeek V4.1 Flash) in strict JSON mode. A deterministic rule
 engine guarantees that the numeric decision is never altered by the model.
 """
 
+from .analyze import analyze_machine, analyze_symptoms
 from .auditor import BiomechanicalAuditor
 from .client import FakeClient, OpenCodeGoClient, OpenCodeGoError, ReasoningClient
 from .config import ReasoningConfig
@@ -33,6 +34,8 @@ __version__ = "0.3.0"
 __all__ = [
     "__version__",
     "BiomechanicalAuditor",
+    "analyze_machine",
+    "analyze_symptoms",
     "ReasoningClient",
     "OpenCodeGoClient",
     "OpenCodeGoError",
