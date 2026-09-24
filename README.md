@@ -181,3 +181,27 @@ Python 3.11+, OpenAI Python SDK (OpenCode Go endpoint), Pydantic v2, `syncfit-co
 - [`syncfit-backend`](https://github.com/Jenifrutica/syncfit-backend) — orchestrates this service.
 
 All code, comments, documentation and commits in this repository are written in English.
+
+## Context for a new session
+
+**What it is.** Cloud reasoning kernel. Two paths: biomechanical audit of a
+decision (`BiomechanicalAuditor`) and routine generation by muscle group
+(`RoutinePlanner`), both with a deterministic safety layer.
+
+**Stack.** Python 3.11+, OpenAI SDK pointed at **OpenCode Go**
+(`https://opencode.ai/zen/go/v1`, model `deepseek-v4.1-flash`), Pydantic.
+
+**Config.** `REASONING_API_KEY` (or `OPENCODE_API_KEY`), `REASONING_PRODUCT`
+(`go`|`zen`, auto-fallback), model, temperature 0.1; reads `.env`.
+
+**Layout.** `syncfit_ai/`: `client/` (OpenCodeGoClient, FakeClient), `prompts/`,
+`schema/`, `rules/`, `routine.py` (RoutinePlanner, enrich, offline), `ordering.py`
+(medical order: warmup/activation first, compounds first, low-impact in
+ovulatory/advanced pregnancy, blocked last), `loads.py` (load variation from
+k_load + energy), `supplements.py`, `auditor.py`.
+
+**Examples.** `examples/check_connection.py`, `reference_pipeline.py`,
+`simulated_session.py`, `generate_routine.py`.
+
+**Rule.** Never compute `k_load` here; echo it from core. Output validated
+against `AIReasoningResponse`/`RoutineResponse`. Tests offline via FakeClient.
