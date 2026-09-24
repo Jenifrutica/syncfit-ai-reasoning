@@ -16,6 +16,7 @@ from .loads import (
     load_multiplier,
     suggested_weight,
 )
+from .ordering import order_routine
 from .routine import (
     DEFAULT_EXERCISES_PER_GROUP,
     RoutinePlanner,
@@ -42,6 +43,7 @@ __all__ = [
     "RoutinePlanner",
     "build_offline_routine",
     "enrich_routine",
+    "order_routine",
     "DEFAULT_EXERCISES_PER_GROUP",
     "apply_baseline_loads",
     "estimate_variation_pct",
