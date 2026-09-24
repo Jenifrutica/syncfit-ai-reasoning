@@ -23,11 +23,47 @@ from syncfit_core import EngineResult
 from syncfit_core.enums import InferredPhase
 
 from .client import ReasoningClient
+from .loads import apply_baseline_loads
 from .prompts import build_routine_system_prompt, build_routine_user_prompt
 from .structures import LRUCache
 
 _IMPACT_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+_REST_BY_IMPACT = {"HIGH": 150, "MEDIUM": 90, "LOW": 60}
 DEFAULT_EXERCISES_PER_GROUP = 2
+DEFAULT_EXERCISES_COUNT = 5
+DEFAULT_EFFECTIVE_SETS = 3
+DEFAULT_APPROXIMATION_SETS = 2
+DEFAULT_REPS = 10
+SECONDS_PER_REP = 3
+
+
+def _rest_for(impact: object) -> int:
+    return _REST_BY_IMPACT.get(_value(impact), 90)
+
+
+def _set(set_type: str, reps: int, weight: float, rest: int) -> dict:
+    return {
+        "type": set_type,
+        "reps": int(reps),
+        "weight_kg": round(float(weight), 1),
+        "rest_seconds": int(rest),
+        "tempo": None,
+        "estimated_seconds": int(reps * SECONDS_PER_REP + rest),
+    }
+
+
+def _build_sets(role: str, weight: float, impact: object) -> list[dict]:
+    if role in ("WARMUP", "ACTIVATION"):
+        set_type = "WARMUP" if role == "WARMUP" else "ACTIVATION"
+        return [_set(set_type, 12, 0.0, 30) for _ in range(2)]
+    rest = _rest_for(impact)
+    sets = [
+        _set("APPROXIMATION", DEFAULT_REPS, weight * (0.5 if i == 0 else 0.75), 60)
+        for i in range(DEFAULT_APPROXIMATION_SETS)
+    ]
+    sets.extend(_set("EFFECTIVE", DEFAULT_REPS, weight, rest) for _ in range(DEFAULT_EFFECTIVE_SETS))
+    return sets
+
 
 _REASONS = {
     "impact": {
@@ -128,6 +164,8 @@ def _entry_from_exercise(
         replacement = _substitute_for(exercise, requested_groups, max_impact)
         if replacement is not None:
             substitute = localize(replacement.name, language)
+    role = _value(getattr(exercise, "role", "MAIN"))
+    sets = _build_sets(role, float(weight), exercise.impact)
     return {
         "exercise_original": localized["name"],
         "blocked": blocked,
@@ -142,6 +180,10 @@ def _entry_from_exercise(
         "description": localized["description"],
         "image_url": exercise.image_url,
         "media_url": exercise.media_url,
+        "role": _value(getattr(exercise, "role", "MAIN")),
+        "rest_seconds": _rest_for(exercise.impact),
+        "estimated_seconds": sum(s["estimated_seconds"] for s in sets),
+        "sets": sets,
     }
 
 
@@ -153,6 +195,27 @@ def _resolve(item: dict[str, Any], by_id: dict[str, Exercise], by_name: dict[str
     return by_name.get(name)
 
 
+def _select_warmup(groups: list[str], limit: int = 2) -> list[Exercise]:
+    selected: list[Exercise] = []
+    seen: set[str] = set()
+    for group in groups:
+        for exercise in exercises_for_groups([group]):
+            role = _value(getattr(exercise, "role", "MAIN"))
+            if role in ("WARMUP", "ACTIVATION") and exercise.id not in seen:
+                seen.add(exercise.id)
+                selected.append(exercise)
+                if len(selected) >= limit:
+                    return selected
+    return selected
+
+
+def _trim_to_budget(routine: list[dict[str, Any]], budget_seconds: int) -> list[dict[str, Any]]:
+    trimmed = list(routine)
+    while trimmed and sum(e["estimated_seconds"] for e in trimmed) > budget_seconds:
+        trimmed.pop()
+    return trimmed
+
+
 def build_offline_routine(
     request: RoutineRequest,
     core_result: EngineResult | None = None,
@@ -161,14 +224,26 @@ def build_offline_routine(
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
     max_impact = _max_impact(core_result)
-    per_group = request.exercises_per_group or DEFAULT_EXERCISES_PER_GROUP
+    target = request.exercises_count or DEFAULT_EXERCISES_COUNT
+    per_group = request.exercises_per_group or max(1, -(-target // len(groups)))
+
+    warmup: list[dict[str, Any]] = []
+    if request.include_warmup:
+        warmup = [
+            _entry_from_exercise(e, language, max_impact, groups)
+            for e in _select_warmup(groups, 2)
+        ]
 
     entries: list[dict[str, Any]] = []
     seen: set[str] = set()
     for group in groups:
         candidates = exercises_for_groups([group])
-        safe = [e for e in candidates if _rank(e.impact) <= _rank(max_impact)]
-        pool = safe or candidates
+        safe = [
+            e
+            for e in candidates
+            if _value(getattr(e, "role", "MAIN")) == "MAIN" and _rank(e.impact) <= _rank(max_impact)
+        ]
+        pool = safe or [e for e in candidates if _value(getattr(e, "role", "MAIN")) == "MAIN"]
         count = 0
         for exercise in pool:
             if exercise.id in seen:
@@ -176,15 +251,26 @@ def build_offline_routine(
             seen.add(exercise.id)
             entries.append(_entry_from_exercise(exercise, language, max_impact, groups))
             count += 1
-            if count >= per_group:
+            if count >= per_group or len(entries) >= target:
                 break
+        if len(entries) >= target:
+            break
 
+    if request.time_budget_minutes:
+        warmup_seconds = sum(e["estimated_seconds"] for e in warmup)
+        entries = _trim_to_budget(
+            entries, max(request.time_budget_minutes * 60 - warmup_seconds, 0)
+        )
+
+    total = sum(e["estimated_seconds"] for e in warmup + entries)
     payload: dict[str, Any] = {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "session_id": request.session_id,
         "language": language,
         "muscle_groups": groups,
         "alerts": [],
+        "total_estimated_minutes": round(total / 60, 1),
+        "warmup": warmup,
         "routine": entries,
     }
     if core_result is not None:
@@ -196,6 +282,7 @@ def build_offline_routine(
             }
         )
     return payload
+
 
 
 def enrich_routine(
@@ -257,12 +344,28 @@ def enrich_routine(
     if blocked_any:
         alerts.append(_ALERT_BLOCK.get(language.lower(), _ALERT_BLOCK["en"]))
 
+    warmup: list[dict[str, Any]] = []
+    if request.include_warmup:
+        warmup = [
+            _entry_from_exercise(e, language, max_impact, groups)
+            for e in _select_warmup(groups, 2)
+        ]
+
+    if request.time_budget_minutes:
+        warmup_seconds = sum(e["estimated_seconds"] for e in warmup)
+        entries = _trim_to_budget(
+            entries, max(request.time_budget_minutes * 60 - warmup_seconds, 0)
+        )
+
+    total = sum(e["estimated_seconds"] for e in warmup + entries)
     result: dict[str, Any] = {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "session_id": request.session_id,
         "language": language,
         "muscle_groups": groups,
         "alerts": alerts,
+        "total_estimated_minutes": round(total / 60, 1),
+        "warmup": warmup,
         "routine": entries,
     }
     if core_result is not None:
@@ -303,6 +406,7 @@ class RoutinePlanner:
         self,
         request: RoutineRequest,
         core_result: EngineResult | None = None,
+        baseline_loads: list[Any] | None = None,
     ) -> RoutineResponse:
         key = self._key(request, core_result)
         cached = self._cache.get(key)
@@ -314,6 +418,13 @@ class RoutinePlanner:
         user_prompt = build_routine_user_prompt(request, catalog, core_result)
         raw = self._client.complete(system_prompt, user_prompt, session_id=request.session_id)
         enriched = enrich_routine(request, core_result, raw, catalog)
+        if baseline_loads:
+            enriched["warmup"] = apply_baseline_loads(
+                enriched.get("warmup", []), baseline_loads, core_result, request.energy_level
+            )
+            enriched["routine"] = apply_baseline_loads(
+                enriched.get("routine", []), baseline_loads, core_result, request.energy_level
+            )
         validated = RoutineResponse.model_validate(enriched)
         self._cache.put(key, validated)
         return validated
@@ -322,8 +433,17 @@ class RoutinePlanner:
         self,
         request: RoutineRequest,
         core_result: EngineResult | None = None,
+        baseline_loads: list[Any] | None = None,
     ) -> RoutineResponse:
-        return RoutineResponse.model_validate(build_offline_routine(request, core_result))
+        payload = build_offline_routine(request, core_result)
+        if baseline_loads:
+            payload["warmup"] = apply_baseline_loads(
+                payload.get("warmup", []), baseline_loads, core_result, request.energy_level
+            )
+            payload["routine"] = apply_baseline_loads(
+                payload.get("routine", []), baseline_loads, core_result, request.energy_level
+            )
+        return RoutineResponse.model_validate(payload)
 
 
 __all__ = [

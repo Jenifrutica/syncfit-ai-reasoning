@@ -10,6 +10,12 @@ from .auditor import BiomechanicalAuditor
 from .client import FakeClient, OpenCodeGoClient, OpenCodeGoError, ReasoningClient
 from .config import ReasoningConfig
 from .domain import AuditRequest, ProgrammedExercise
+from .loads import (
+    apply_baseline_loads,
+    estimate_variation_pct,
+    load_multiplier,
+    suggested_weight,
+)
 from .routine import (
     DEFAULT_EXERCISES_PER_GROUP,
     RoutinePlanner,
@@ -19,8 +25,9 @@ from .routine import (
 from .rules import enforce_rules, estimate_articular_risk, evaluate_exercise
 from .schema import SchemaValidationError, validate_ai_response
 from .structures import LRUCache, PriorityQueue
+from .supplements import recommend_supplements
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",
@@ -36,6 +43,11 @@ __all__ = [
     "build_offline_routine",
     "enrich_routine",
     "DEFAULT_EXERCISES_PER_GROUP",
+    "apply_baseline_loads",
+    "estimate_variation_pct",
+    "load_multiplier",
+    "suggested_weight",
+    "recommend_supplements",
     "enforce_rules",
     "estimate_articular_risk",
     "evaluate_exercise",

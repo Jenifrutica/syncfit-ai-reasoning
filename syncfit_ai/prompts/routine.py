@@ -8,7 +8,7 @@ from syncfit_contracts import Exercise, MuscleGroup, RoutineRequest, localize
 from syncfit_core import EngineResult
 
 ROUTINE_SCHEMA = """{
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "session_id": "<echo the session id>",
   "language": "EN | ES | ZH",
   "muscle_groups": ["<the requested muscle groups>"],
