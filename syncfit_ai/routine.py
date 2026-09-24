@@ -114,6 +114,12 @@ def _is_supine(exercise: Exercise) -> bool:
     return "bench press" in name or "supine" in name
 
 
+def _localized_text(node) -> dict[str, str]:
+    data = {"en": node.en}
+    data.update(node.model_extra or {})
+    return data
+
+
 def _localized(exercise: Exercise, language: str) -> dict[str, str]:
     data = {"en": exercise.name.en}
     data.update(exercise.name.model_extra or {})
@@ -180,6 +186,8 @@ def _entry_from_exercise(
         "muscle_groups": list(exercise.muscle_groups),
         "impact": _value(exercise.impact),
         "description": localized["description"],
+        "how_to": _localized_text(exercise.how_to) if exercise.how_to else None,
+        "tips": [_localized_text(t) for t in (exercise.tips or [])],
         "image_url": exercise.image_url,
         "media_url": exercise.media_url,
         "role": _value(getattr(exercise, "role", "MAIN")),
