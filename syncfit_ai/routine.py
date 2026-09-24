@@ -186,7 +186,7 @@ def _entry_from_exercise(
         "muscle_groups": list(exercise.muscle_groups),
         "impact": _value(exercise.impact),
         "description": localized["description"],
-        "how_to": _localized_text(exercise.how_to) if exercise.how_to else None,
+        "how_to": _localized_text(exercise.how_to or exercise.description),
         "tips": [_localized_text(t) for t in (exercise.tips or [])],
         "image_url": exercise.image_url,
         "media_url": exercise.media_url,
