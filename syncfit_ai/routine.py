@@ -24,6 +24,7 @@ from syncfit_core.enums import InferredPhase
 
 from .client import ReasoningClient
 from .loads import apply_baseline_loads
+from .ordering import order_routine
 from .prompts import build_routine_system_prompt, build_routine_user_prompt
 from .structures import LRUCache
 
@@ -263,6 +264,8 @@ def build_offline_routine(
         )
 
     total = sum(e["estimated_seconds"] for e in warmup + entries)
+    phase = core_result.phase_inferred.value if core_result is not None else None
+    entries = order_routine(entries, phase, language)
     payload: dict[str, Any] = {
         "schema_version": "1.2.0",
         "session_id": request.session_id,
@@ -357,6 +360,9 @@ def enrich_routine(
             entries, max(request.time_budget_minutes * 60 - warmup_seconds, 0)
         )
 
+    entries = order_routine(
+        entries, core_result.phase_inferred.value if core_result is not None else None, language
+    )
     total = sum(e["estimated_seconds"] for e in warmup + entries)
     result: dict[str, Any] = {
         "schema_version": "1.2.0",
