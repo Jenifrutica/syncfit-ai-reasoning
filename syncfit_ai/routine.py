@@ -17,6 +17,7 @@ from syncfit_contracts import (
     RoutineResponse,
     exercises_for_groups,
     get_exercise,
+    load_exercises,
     localize,
 )
 from syncfit_core import EngineResult
@@ -207,6 +208,14 @@ def _select_warmup(groups: list[str], limit: int = 2) -> list[Exercise]:
                 selected.append(exercise)
                 if len(selected) >= limit:
                     return selected
+    if len(selected) < limit:
+        for exercise in load_exercises():
+            role = _value(getattr(exercise, "role", "MAIN"))
+            if role in ("WARMUP", "ACTIVATION") and exercise.id not in seen:
+                seen.add(exercise.id)
+                selected.append(exercise)
+                if len(selected) >= limit:
+                    break
     return selected
 
 
