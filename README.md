@@ -224,6 +224,23 @@ thrust EMG; Plotkin et al. (2023) glute hypertrophy; ACOG (2020); Hewett et al.
 
 All code, comments, documentation and commits in this repository are written in English.
 
+## Handoff for the team
+
+**Role.** Cloud AI (DeepSeek via OpenCode Go). Designs the routine from the
+local-model assessment + profile + gym equipment + evidence, and audits exercises.
+
+**Run / test.** `pip install -e .` · `pytest`. Configure `REASONING_API_KEY`,
+`REASONING_MODEL=deepseek-v4-pro`, `REASONING_PRODUCT=go`.
+
+**Entry points.** `RoutinePlanner.plan()` (calls `build_design_prompt` →
+`enforce_prescription`), deterministic fallback `build_prescription`,
+`alternatives_for()` (UI Change list), `recommend_supplements`,
+`analyze_machine`, `analyze_symptoms`, `order_routine`.
+
+**Key idea.** DeepSeek reasons; a deterministic layer enforces patterns, safety,
+equipment order and echoes `k_load`. `planner.last_engine` is `deepseek` or
+`deterministic` so the backend can report `engine_used`.
+
 ## Context for a new session
 
 **What it is.** Cloud reasoning kernel. Two paths: biomechanical audit of a
