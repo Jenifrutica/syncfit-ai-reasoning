@@ -49,23 +49,24 @@ def test_offline_routine_is_valid_and_low_impact_in_ovulatory():
     assert all(entry.image_url for entry in result.routine)
 
 
-def test_planner_blocks_high_impact_and_substitutes():
-    core = make_core_result(InferredPhase.OVULATORY)
-    planner = RoutinePlanner(FakeClient(response=model_output("back-squat", "goblet-squat")))
+def test_planner_excludes_high_impact_and_never_injects_them():
+    core = make_core_result(InferredPhase.OVULATORY)  # max impact LOW
+    # The model tries to inject high-impact exercises; they must be ignored.
+    planner = RoutinePlanner(FakeClient(response=model_output("back-squat", "box-jumps")))
     result = planner.plan(request(["QUADRICEPS"]), core)
-    entries = {e.exercise_id: e for e in result.routine}
-    assert entries["back-squat"].blocked is True
-    assert entries["back-squat"].exercise_substitute
-    assert entries["goblet-squat"].blocked is False
+    assert result.routine, "routine must not be empty"
+    assert all(entry.impact == "LOW" for entry in result.routine)
+    assert all(entry.exercise_id in {"goblet-squat", "step-ups", "leg-extension"} for entry in result.routine)
+    assert all(entry.movement_pattern for entry in result.routine)
 
 
-def test_planner_blocks_supine_in_gestational_week_16():
+def test_planner_excludes_supine_in_gestational_week_16():
     core = make_core_result(InferredPhase.TRIMESTER_2, modality=Modality.GESTATIONAL, day=18, k_load=0.85)
     planner = RoutinePlanner(FakeClient(response=model_output("flat-bench-press")))
     result = planner.plan(request(["CHEST"]), core)
-    entry = result.routine[0]
-    assert entry.blocked is True
-    assert entry.impact == "MEDIUM"
+    assert result.routine, "chest must still be trained safely"
+    assert all("bench press" not in (entry.exercise_original or "").lower() for entry in result.routine)
+    assert all(not entry.blocked for entry in result.routine)
 
 
 def test_planner_completes_missing_groups():
@@ -109,3 +110,62 @@ def test_enrich_routine_returns_contract_payload():
     payload = enrich_routine(req, core, model_output("goblet-squat"), catalog)
     assert RoutineResponse.model_validate(payload)
     json.dumps(payload)  # serializable
+
+
+def test_glute_prescription_covers_required_patterns_without_duplicates():
+    from syncfit_ai.routine import build_prescription
+
+    core = make_core_result(InferredPhase.FOLLICULAR, k_load=0.95)
+    req = RoutineRequest(muscle_groups=["GLUTES"], language="EN", exercises_count=5)
+    payload = build_prescription(req, core)
+    patterns = [e["movement_pattern"] for e in payload["routine"]]
+    assert len(patterns) == len(set(patterns)), patterns  # no duplicate pattern
+    assert {"hinge", "lunge", "hip_thrust", "glute_kickback", "hip_abduction"} <= set(patterns)
+    assert payload["routine"][0]["compound"] is True  # compounds first
+    assert all(e["rationale"] for e in payload["routine"])
+
+
+def test_contraindicated_patterns_are_excluded():
+    from syncfit_ai.routine import build_prescription
+
+    core = make_core_result(InferredPhase.FOLLICULAR, k_load=0.95)
+    req = RoutineRequest(muscle_groups=["GLUTES"], language="EN", exercises_count=5)
+    payload = build_prescription(req, core, contraindicated_patterns=["lunge", "hinge"])
+    patterns = {e["movement_pattern"] for e in payload["routine"]}
+    assert "lunge" not in patterns and "hinge" not in patterns
+    assert payload["routine"], "other glute patterns must remain"
+
+
+def test_enforce_prescription_normalizes_and_enforces_machine_first():
+    from syncfit_ai.routine import build_prescription, enforce_prescription
+
+    core = make_core_result(InferredPhase.FOLLICULAR, k_load=0.95)
+    req = RoutineRequest(muscle_groups=["GLUTES"], language="EN", exercises_count=5)
+    skeleton = build_prescription(req, core, preferred_exercise_ids=["hip-thrust-machine"])
+    # Model output: underscore ids, a duplicate pattern, wrong hip-thrust variant.
+    model_payload = {
+        "summary": "Glute hypertrophy rationale.",
+        "routine": [
+            {"exercise_id": "romanian_deadlift", "series": 3, "reps": 8, "rest_seconds": 120, "rationale": "hinge"},
+            {"exercise_id": "barbell_hip_thrust", "series": 4, "reps": 10, "rest_seconds": 120, "rationale": "hip thrust"},
+            {"exercise_id": "db_bulgarian_split_squat", "series": 3, "reps": 12, "rationale": "lunge"},
+            {"exercise_id": "cable_glute_kickback_2", "series": 3, "reps": 15, "rationale": "kickback"},
+            {"exercise_id": "hip_abduction", "series": 3, "reps": 15, "rationale": "abduction"},
+        ],
+    }
+    payload = enforce_prescription(
+        req,
+        core,
+        model_payload,
+        skeleton,
+        preferred_exercise_ids=["hip-thrust-machine"],
+        gym_machines=[{"pattern": "hip_thrust", "exercise_id": "hip-thrust-machine"}],
+    )
+    RoutineResponse.model_validate(payload)
+    patterns = [e["movement_pattern"] for e in payload["routine"]]
+    assert len(patterns) == len(set(patterns)), patterns
+    assert set(patterns) >= {"hinge", "lunge", "hip_thrust", "glute_kickback", "hip_abduction"}
+    hip = next(e for e in payload["routine"] if e["movement_pattern"] == "hip_thrust")
+    assert hip["exercise_id"] == "hip-thrust-machine"  # machine forced
+    assert payload["routine"][0]["compound"] is True  # compounds first
+    assert payload["alerts"] and "Glute hypertrophy" in payload["alerts"][0]

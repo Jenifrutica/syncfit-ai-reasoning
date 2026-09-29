@@ -57,8 +57,8 @@ def test_complete_parses_json():
     assert result == payload
     call = completions.calls[0]
     assert call["response_format"] == {"type": "json_object"}
-    assert call["model"] == "deepseek-v4.1-flash"
-    assert call["temperature"] == 0.1
+    assert call["model"] == "deepseek-v4-pro"
+    assert call["temperature"] == 0.25
     assert call["extra_headers"]["x-opencode-session"] == "sess-1"
 
 

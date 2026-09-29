@@ -7,12 +7,19 @@ from typing import Any
 from .client import OpenCodeGoClient
 
 MACHINE_SYSTEM = (
-    "Eres un experto en equipamiento de gimnasio. Devuelve SOLO un objeto JSON con: "
+    "You are a gym equipment expert. Return ONLY a JSON object with: "
     '{"inferred_type": "FREE_WEIGHT|MACHINE|SMITH|CABLE|BODYWEIGHT|ASSISTED|BAND|NONE", '
-    '"purpose": "para que sirve, en tus palabras", '
-    '"exercise_ids": ["movimientos que permite"], '
-    '"weight_factor": number}. Basate en el nombre y descripcion; si solo hay nombre, inferí. '
-    "Responde en el idioma indicado para purpose."
+    '"name": {"en": "...", "es": "...", "zh": "..."}, '
+    '"purpose": {"en": "...", "es": "...", "zh": "..."}, '
+    '"exercise_ids": ["catalog movements this machine covers"], '
+    '"weight_factor": number}. '
+    "The admin may type in any language: translate `name` and `purpose` into "
+    "English, Spanish and Chinese (English is required). Infer `exercise_ids` "
+    "using common catalog exercise ids, and PREFER the variant that matches the "
+    "equipment in the name (e.g. 'hip thrust machine' -> hip-thrust-machine; "
+    "'smith ...' -> smith-hip-thrust/smith-squat; 'cable ...' -> cable-*; "
+    "'leg press' -> leg-press; 'dumbbell ...' -> db-*). List the best-matching "
+    "machine variant first, then other compatible movements."
 )
 
 SYMPTOM_SYSTEM = (
@@ -25,13 +32,14 @@ SYMPTOM_SYSTEM = (
 )
 
 
-def analyze_machine(name: str, description: str | None = None, language: str = "ES", client: Any | None = None) -> dict:
+def analyze_machine(name: str, description: str | None = None, language: str = "EN", client: Any | None = None) -> dict:
+    """Infer a machine's type, localized name/purpose, exercises and weight factor."""
     client = client or OpenCodeGoClient()
     user = f"language={language}\nname={name}\ndescription={description or ''}"
     return client.complete(MACHINE_SYSTEM, user)
 
 
-def analyze_symptoms(symptoms: list[dict], language: str = "ES", client: Any | None = None) -> dict:
+def analyze_symptoms(symptoms: list[dict], language: str = "EN", client: Any | None = None) -> dict:
     client = client or OpenCodeGoClient()
     import json
 

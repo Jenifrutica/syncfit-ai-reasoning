@@ -173,6 +173,48 @@ Python 3.11+, OpenAI Python SDK (OpenCode Go endpoint), Pydantic v2, `syncfit-co
 - [x] Add the reference test pipeline from the source document.
 - [x] Write integration tests with schema validation.
 
+## Machine analysis (localized)
+
+`analyze_machine(name, description, language)` returns `inferred_type`, a localized
+`name` and `purpose` (`{"en","es","zh"}`), the `exercise_ids` the machine covers and a
+`weight_factor`, preferring the machine variant (hip-thrust-machine, smith-*, cable-*).
+The admin may type in any language; the backend stores the localized
+dicts (with a copy fallback when the AI is unavailable) and the routine builder uses
+`exercise_ids` to prefer gym machines.
+
+## Pattern-based prescription (evidence-informed)
+
+The routine is built from **movement patterns**, not a flat exercise list:
+
+- `build_prescription()` (deterministic core): one exercise per pattern (no
+  duplicates), required-pattern coverage per muscle group, compounds first,
+  contraindicated patterns excluded, gym-machine patterns prioritised.
+- `RoutinePlanner.plan()` (**DeepSeek designs**): the local assessment + profile +
+  gym machines + evidence go to `deepseek-v4-pro` (OpenCode Go), which returns the
+  full routine (patterns, exercises, order, sets, reps, rest, rationale).
+  `enforce_prescription()` then normalizes ids, enforces pattern coverage / no
+  duplicate pattern / compounds-first / contraindications / machine-first and
+  echoes `k_load` (never recomputed). Fallback: `build_prescription` when the AI
+  is unavailable.
+
+Required patterns (examples): GLUTES = hinge, lunge, hip_thrust, glute_kickback,
+hip_abduction.
+
+Equipment filter: exercises are restricted to the gym inventory
+(`Exercise.required_equipment`): machines first, then free equipment
+(dumbbell/barbell/smith/bench/cable), then bodyweight. `alternatives_for()` powers
+the UI Change button (available options first). Contraindications come from the symptom catalog (`avoid_patterns`):
+knee pain blocks lunge/squat; low-back pain blocks hinge/row.
+
+Prescription rules (hypertrophy): 10-20 sets/muscle/week, 3-5 sets/exercise,
+6-12 reps, rest 90-180 s compounds / 60-90 s isolation, progressive overload.
+
+References (APA 7): Schoenfeld, B. J. (2017). *Science and Development of Muscle
+Hypertrophy*.; Schoenfeld, Ogborn & Krieger (2016) frequency; Baz-Valle et al.
+(2022) volume; Currier et al. (2023) rest intervals; Contreras et al. (2016) hip
+thrust EMG; Plotkin et al. (2023) glute hypertrophy; ACOG (2020); Hewett et al.
+(2007); Wojtys et al. (1998); Maniar et al. (2022); Mottola et al. (2018).
+
 ## Related repositories
 
 - [`syncfit-contracts`](https://github.com/Jenifrutica/syncfit-contracts) — output schema (`AIReasoningResponse`).

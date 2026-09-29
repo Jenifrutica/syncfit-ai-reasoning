@@ -13,7 +13,7 @@ def test_defaults():
     assert config.product == "go"
     assert config.base_url == PRODUCT_BASE_URLS["go"]
     assert config.model == DEFAULT_MODEL
-    assert config.temperature == 0.1
+    assert config.temperature == 0.25
     assert config.is_configured is False
     assert config.alternate_base_url == PRODUCT_BASE_URLS["zen"]
 

@@ -66,9 +66,11 @@ def order_routine(
         blocked = 1 if entry.get("blocked") else 0  # blocked last
         role = _ROLE_PRIORITY.get(_role(entry), 2)
         impact = _IMPACT_RANK.get(_impact(entry), 1)
+        # Explicit `compound` flag wins; fall back to the muscle-group count heuristic.
+        is_compound = entry.get("compound")
         compound = _groups(entry)
-        # Compounds first (negative so higher group count sorts earlier).
-        compound_key = -compound
+        # Compounds first (0 sorts before 1); isolation later.
+        compound_key = 0 if (is_compound or (is_compound is None and compound >= _COMPOUND_THRESHOLD)) else 1
 
         if low_impact:
             impact_key = impact  # low impact first

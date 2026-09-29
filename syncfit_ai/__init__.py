@@ -21,7 +21,11 @@ from .ordering import order_routine
 from .routine import (
     DEFAULT_EXERCISES_PER_GROUP,
     RoutinePlanner,
+    alternatives_for,
+    build_design_prompt,
     build_offline_routine,
+    build_prescription,
+    enforce_prescription,
     enrich_routine,
 )
 from .rules import enforce_rules, estimate_articular_risk, evaluate_exercise
@@ -45,6 +49,10 @@ __all__ = [
     "ProgrammedExercise",
     "RoutinePlanner",
     "build_offline_routine",
+    "build_prescription",
+    "build_design_prompt",
+    "alternatives_for",
+    "enforce_prescription",
     "enrich_routine",
     "order_routine",
     "DEFAULT_EXERCISES_PER_GROUP",

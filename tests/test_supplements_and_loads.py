@@ -73,10 +73,12 @@ def test_planner_offline_applies_loads():
     core = make_core_result(k_load=0.9)
     request = RoutineRequest(muscle_groups=["QUADRICEPS"], language="EN")
     planner = RoutinePlanner(FakeClient(response={}))
-    loads = [ExerciseLoad(exercise_id="goblet-squat", weight_kg=20)]
+    base = planner.plan_offline(request, core)
+    first_id = base.routine[0].exercise_id
+    loads = [ExerciseLoad(exercise_id=first_id, weight_kg=20)]
     result = planner.plan_offline(request, core, baseline_loads=loads)
-    goblet = next((e for e in result.routine if e.exercise_id == "goblet-squat"), None)
-    assert goblet is not None and goblet.weight_suggested_kg == 18.0
+    entry = next((e for e in result.routine if e.exercise_id == first_id), None)
+    assert entry is not None and entry.weight_suggested_kg == 18.0
 
 
 def test_supplements_pregnancy_safety():
