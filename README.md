@@ -264,3 +264,11 @@ k_load + energy), `supplements.py`, `auditor.py`.
 
 **Rule.** Never compute `k_load` here; echo it from core. Output validated
 against `AIReasoningResponse`/`RoutineResponse`. Tests offline via FakeClient.
+
+## Roadmap · Qué falta (español)
+
+> Estado: **implementado** (cliente OpenCode/DeepSeek, planner, reglas, alternativas).
+
+- (Opcional) Tests para `analyze_machine` / `analyze_symptoms`.
+- (Opcional) Usar realmente la `PriorityQueue` exportada.
+- (Opcional) Unificar la versión de `schema_version` en las salidas.
