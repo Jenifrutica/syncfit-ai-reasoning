@@ -4,6 +4,10 @@ OpenCode Go and Zen share an account key. DeepSeek is called through Chat
 Completions; transient failures can fall back to GPT-6 Luna through Responses.
 Authentication failures may still try the other OpenCode product.
 
+Every attempt is time-boxed (primary, backup and a total deadline) so a slow or
+unavailable model never blocks longer than the backend's proxy can wait; the
+planner then returns its deterministic routine.
+
 Requests identify themselves with a dedicated user agent and a stable session id,
 as OpenCode recommends.
 """
@@ -11,6 +15,7 @@ as OpenCode recommends.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import Any, Callable
 
@@ -96,7 +101,10 @@ class OpenCodeGoClient:
         return OpenAI(
             api_key=self._config.api_key,
             base_url=base_url,
-            timeout=self._config.timeout,
+            timeout=self._config.deadline,
+            # No SDK-level retries: they multiply the per-call timeout and blow the
+            # deadline. Our own primary/backup/reasoning fallback handles recovery.
+            max_retries=0,
             default_headers={"User-Agent": self._config.user_agent},
         )
 
@@ -120,12 +128,23 @@ class OpenCodeGoClient:
         # OpenCode requires a stable session id for routing and caching.
         extra_headers = {"x-opencode-session": session_id or str(uuid.uuid4())}
 
+        # Total wall-clock budget so a slow/unavailable model can never outlive the
+        # proxy in front of the backend; once exhausted the planner goes deterministic.
+        started = time.monotonic()
+        deadline = self._config.deadline
+
+        def remaining() -> float:
+            return deadline - (time.monotonic() - started)
+
         last_error: Exception | None = None
         self.last_model = None
         candidates = self._candidate_base_urls()
         for index, base_url in enumerate(candidates):
+            budget = min(self._config.timeout, remaining())
+            if budget <= 0:
+                raise OpenCodeGoError("Reasoning deadline exceeded before the model call.")
             try:
-                payload = self._complete_on(base_url, messages, extra_headers)
+                payload = self._complete_on(base_url, messages, extra_headers, budget)
                 self.last_product_base_url = base_url
                 self.last_model = self._config.model
                 return payload
@@ -134,14 +153,16 @@ class OpenCodeGoClient:
                 if _is_auth_error(exc) and index < len(candidates) - 1:
                     continue  # try the other product
                 fallback_model = self._config.fallback_model
+                fallback_budget = min(self._config.fallback_timeout, remaining())
                 if (
                     _is_transient_error(exc)
                     and fallback_model
                     and fallback_model != self._config.model
+                    and fallback_budget > 0
                 ):
                     try:
                         payload = self._complete_with_responses(
-                            base_url, fallback_model, messages, extra_headers
+                            base_url, fallback_model, messages, extra_headers, fallback_budget
                         )
                     except Exception as fallback_exc:  # noqa: BLE001 - planner uses deterministic fallback
                         raise OpenCodeGoError(
@@ -159,18 +180,29 @@ class OpenCodeGoClient:
         base_url: str,
         messages: list[dict[str, str]],
         extra_headers: dict[str, str],
+        timeout: float,
     ) -> dict[str, Any]:
         client = self._get_client(base_url)
         try:
             response = self._create(
-                client, messages, extra_headers, json_mode=True, model=self._config.model
+                client,
+                messages,
+                extra_headers,
+                json_mode=True,
+                model=self._config.model,
+                timeout=timeout,
             )
         except Exception as exc:
             # Only retry without response_format when that parameter is the cause.
             if not _is_response_format_error(exc):
                 raise
             response = self._create(
-                client, messages, extra_headers, json_mode=False, model=self._config.model
+                client,
+                messages,
+                extra_headers,
+                json_mode=False,
+                model=self._config.model,
+                timeout=timeout,
             )
 
         content = response.choices[0].message.content
@@ -182,6 +214,7 @@ class OpenCodeGoClient:
         model: str,
         messages: list[dict[str, str]],
         extra_headers: dict[str, str],
+        timeout: float,
     ) -> dict[str, Any]:
         client = self._get_client(base_url)
         try:
@@ -191,6 +224,7 @@ class OpenCodeGoClient:
                 input=messages[1]["content"],
                 text={"format": {"type": "json_object"}},
                 extra_headers=extra_headers,
+                timeout=timeout,
             )
         except Exception as exc:
             if not _is_response_format_error(exc):
@@ -200,6 +234,7 @@ class OpenCodeGoClient:
                 instructions=messages[0]["content"],
                 input=messages[1]["content"],
                 extra_headers=extra_headers,
+                timeout=timeout,
             )
         return self._parse_json_object(getattr(response, "output_text", None))
 
@@ -222,11 +257,13 @@ class OpenCodeGoClient:
         extra_headers: dict[str, str],
         json_mode: bool,
         model: str,
+        timeout: float,
     ) -> Any:
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": self._config.temperature,
+            "timeout": timeout,
         }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}

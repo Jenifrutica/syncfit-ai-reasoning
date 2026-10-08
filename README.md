@@ -37,6 +37,12 @@ tries GPT-6 Luna through the Responses API, then lets the planner use its existi
 deterministic routine if both model calls fail. The generated prescription still
 passes deterministic safety enforcement.
 
+Calls are **time-boxed** so a slow or unavailable model never outlives the proxy
+in front of the backend: the primary call is bounded by `REASONING_TIMEOUT`, the
+backup by `REASONING_FALLBACK_TIMEOUT`, and the whole attempt by
+`REASONING_DEADLINE`. When the deadline is exhausted, the deterministic routine is
+returned immediately.
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `REASONING_API_KEY` | — | OpenCode account key (falls back to `OPENCODE_API_KEY`) |
@@ -46,7 +52,9 @@ passes deterministic safety enforcement.
 | `REASONING_MODEL` | `deepseek-v4-pro` | Primary model id |
 | `REASONING_FALLBACK_MODEL` | `gpt-6-luna` | Responses API model for transient primary failures; empty disables it |
 | `REASONING_TEMPERATURE` | `0.25` | Chat Completions temperature |
-| `REASONING_TIMEOUT` | `120` | Request timeout (seconds) |
+| `REASONING_TIMEOUT` | `90` | Primary call timeout (seconds) |
+| `REASONING_FALLBACK_TIMEOUT` | `20` | Backup call timeout (seconds) |
+| `REASONING_DEADLINE` | `115` | Whole-attempt budget (seconds); then the deterministic routine |
 
 The same OpenCode key is used for both model calls. The key is read from (1) the
 environment, (2) a local `.env` file, in that order. It is never stored in the

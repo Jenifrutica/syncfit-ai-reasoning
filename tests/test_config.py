@@ -1,8 +1,11 @@
 from pathlib import Path
 
 from syncfit_ai.config import (
-    DEFAULT_MODEL,
+    DEFAULT_DEADLINE,
     DEFAULT_FALLBACK_MODEL,
+    DEFAULT_FALLBACK_TIMEOUT,
+    DEFAULT_MODEL,
+    DEFAULT_TIMEOUT,
     PRODUCT_BASE_URLS,
     ReasoningConfig,
     normalize_product,
@@ -16,6 +19,9 @@ def test_defaults():
     assert config.model == DEFAULT_MODEL
     assert config.fallback_model == DEFAULT_FALLBACK_MODEL
     assert config.temperature == 0.25
+    assert config.timeout == DEFAULT_TIMEOUT
+    assert config.fallback_timeout == DEFAULT_FALLBACK_TIMEOUT
+    assert config.deadline == DEFAULT_DEADLINE
     assert config.is_configured is False
     assert config.alternate_base_url == PRODUCT_BASE_URLS["zen"]
 
@@ -35,6 +41,19 @@ def test_fallback_model_can_be_overridden_or_disabled():
     disabled = ReasoningConfig.from_env({"REASONING_FALLBACK_MODEL": ""})
     assert overridden.fallback_model == "gpt-6-luna"
     assert disabled.fallback_model is None
+
+
+def test_time_budget_is_configurable():
+    config = ReasoningConfig.from_env(
+        {
+            "REASONING_TIMEOUT": "12",
+            "REASONING_FALLBACK_TIMEOUT": "9",
+            "REASONING_DEADLINE": "40",
+        }
+    )
+    assert config.timeout == 12.0
+    assert config.fallback_timeout == 9.0
+    assert config.deadline == 40.0
 
 
 def test_from_env_falls_back_to_opencode_key():

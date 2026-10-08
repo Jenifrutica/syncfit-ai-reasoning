@@ -3,6 +3,11 @@
 OpenCode Go and OpenCode Zen use the same account key. DeepSeek uses Chat
 Completions; GPT-6 Luna is the configured outage fallback and uses Responses.
 
+Calls are time-boxed so a slow or unavailable model never blocks longer than the
+proxy in front of the backend allows: ``timeout`` bounds the primary call,
+``fallback_timeout`` the backup, and ``deadline`` the whole attempt. When the
+deadline is exhausted the planner returns its deterministic routine.
+
 Everything is configurable by environment variable (or a local `.env`); the API
 key is never hardcoded.
 """
@@ -29,7 +34,9 @@ DEFAULT_PRODUCT = "go"
 DEFAULT_MODEL = "deepseek-v4-pro"
 DEFAULT_FALLBACK_MODEL = "gpt-6-luna"
 DEFAULT_TEMPERATURE = 0.25
-DEFAULT_TIMEOUT = 120.0
+DEFAULT_TIMEOUT = 90.0
+DEFAULT_FALLBACK_TIMEOUT = 20.0
+DEFAULT_DEADLINE = 115.0
 DEFAULT_USER_AGENT = "syncfit-ai-reasoning/0.1.0"
 
 API_KEY_ENV_VARS = ("REASONING_API_KEY", "OPENCODE_API_KEY")
@@ -71,6 +78,8 @@ class ReasoningConfig:
     fallback_model: str | None = DEFAULT_FALLBACK_MODEL
     temperature: float = DEFAULT_TEMPERATURE
     timeout: float = DEFAULT_TIMEOUT
+    fallback_timeout: float = DEFAULT_FALLBACK_TIMEOUT
+    deadline: float = DEFAULT_DEADLINE
     user_agent: str = DEFAULT_USER_AGENT
     auto_product_fallback: bool = True
 
@@ -115,6 +124,10 @@ class ReasoningConfig:
             ),
             temperature=float(source.get("REASONING_TEMPERATURE", DEFAULT_TEMPERATURE)),
             timeout=float(source.get("REASONING_TIMEOUT", DEFAULT_TIMEOUT)),
+            fallback_timeout=float(
+                source.get("REASONING_FALLBACK_TIMEOUT", DEFAULT_FALLBACK_TIMEOUT)
+            ),
+            deadline=float(source.get("REASONING_DEADLINE", DEFAULT_DEADLINE)),
             user_agent=source.get("REASONING_USER_AGENT", DEFAULT_USER_AGENT),
             auto_product_fallback=auto_fallback,
         )
@@ -129,6 +142,8 @@ __all__ = [
     "DEFAULT_FALLBACK_MODEL",
     "DEFAULT_TEMPERATURE",
     "DEFAULT_TIMEOUT",
+    "DEFAULT_FALLBACK_TIMEOUT",
+    "DEFAULT_DEADLINE",
     "DEFAULT_USER_AGENT",
     "API_KEY_ENV_VARS",
     "normalize_product",

@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 
@@ -75,6 +76,7 @@ def test_complete_parses_json():
     assert call["response_format"] == {"type": "json_object"}
     assert call["model"] == "deepseek-v4-pro"
     assert call["temperature"] == 0.25
+    assert call["timeout"] == 90.0
     assert call["extra_headers"]["x-opencode-session"] == "sess-1"
 
 
@@ -109,8 +111,46 @@ def test_transient_primary_failure_uses_gpt6_responses_fallback():
     assert responses.calls[0]["instructions"] == "system instructions"
     assert responses.calls[0]["input"] == "routine request"
     assert responses.calls[0]["text"] == {"format": {"type": "json_object"}}
+    assert responses.calls[0]["timeout"] == 20.0
     assert responses.calls[0]["extra_headers"]["x-opencode-session"] == "sess-2"
     assert client.last_model == "gpt-6-luna"
+
+
+def test_build_client_disables_sdk_retries():
+    client = OpenCodeGoClient(config=ReasoningConfig(api_key="test-key"))
+    built = client._build_client("https://example.test/v1")
+    assert built.max_retries == 0
+    assert built.timeout == ReasoningConfig(api_key="test-key").deadline
+
+
+def test_deadline_exceeded_raises_without_calling_the_model():
+    completions = _Completions("{}")
+    fake = _FakeOpenAI(completions)
+    client = OpenCodeGoClient(
+        config=ReasoningConfig(api_key="test-key", deadline=0.0), client=fake
+    )
+
+    with pytest.raises(OpenCodeGoError):
+        client.complete("system", "user")
+    assert completions.calls == []
+
+
+def test_fallback_is_skipped_when_no_time_remains():
+    def slow_fail(**_kwargs):
+        time.sleep(0.06)
+        raise _HttpError(503)
+
+    completions = _Completions("unused")
+    completions.create = slow_fail
+    responses = _Responses('{"should_not_be_used": true}')
+    config = ReasoningConfig(api_key="test-key", timeout=1.0, deadline=0.05)
+    client = OpenCodeGoClient(
+        config=config, client=_FakeOpenAI(completions, responses)
+    )
+
+    with pytest.raises(_HttpError):
+        client.complete("system", "user")
+    assert responses.calls == []
 
 
 def test_non_transient_primary_failure_does_not_use_fallback():
