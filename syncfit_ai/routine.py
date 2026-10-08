@@ -700,7 +700,7 @@ def build_design_prompt(
     contraindicated: set[str],
     equipment_keys: Iterable[str] | None = None,
 ) -> tuple[str, str]:
-    """DeepSeek designs the whole routine from the local-model state + evidence."""
+    """The configured generative model designs a routine from state and evidence."""
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
     catalog = exercises_for_groups(groups)
@@ -933,7 +933,7 @@ def alternatives_for(
 
 
 class RoutinePlanner:
-    """DeepSeek designs the routine; the deterministic layer validates/repairs it."""
+    """A generative model designs the routine; deterministic rules validate it."""
 
     def __init__(self, client: ReasoningClient, cache_size: int = 128) -> None:
         self._client = client
@@ -1113,7 +1113,11 @@ class RoutinePlanner:
                     equipment_keys=equipment_keys,
                     available_exercise_ids=available_exercise_ids,
                 )
-                self._last_engine = "deepseek"
+                self._last_engine = (
+                    "gpt-6-luna"
+                    if getattr(self._client, "last_model", None) == "gpt-6-luna"
+                    else "deepseek"
+                )
         except Exception:
             enriched = skeleton
             self._last_engine = "deterministic"

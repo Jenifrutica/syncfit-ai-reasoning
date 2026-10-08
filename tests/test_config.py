@@ -2,6 +2,7 @@ from pathlib import Path
 
 from syncfit_ai.config import (
     DEFAULT_MODEL,
+    DEFAULT_FALLBACK_MODEL,
     PRODUCT_BASE_URLS,
     ReasoningConfig,
     normalize_product,
@@ -13,6 +14,7 @@ def test_defaults():
     assert config.product == "go"
     assert config.base_url == PRODUCT_BASE_URLS["go"]
     assert config.model == DEFAULT_MODEL
+    assert config.fallback_model == DEFAULT_FALLBACK_MODEL
     assert config.temperature == 0.25
     assert config.is_configured is False
     assert config.alternate_base_url == PRODUCT_BASE_URLS["zen"]
@@ -24,7 +26,15 @@ def test_from_env_reads_api_key():
     )
     assert config.api_key == "secret"
     assert config.model == "deepseek-v4-pro"
+    assert config.fallback_model == "gpt-6-luna"
     assert config.is_configured is True
+
+
+def test_fallback_model_can_be_overridden_or_disabled():
+    overridden = ReasoningConfig.from_env({"REASONING_FALLBACK_MODEL": "gpt-6-luna"})
+    disabled = ReasoningConfig.from_env({"REASONING_FALLBACK_MODEL": ""})
+    assert overridden.fallback_model == "gpt-6-luna"
+    assert disabled.fallback_model is None
 
 
 def test_from_env_falls_back_to_opencode_key():

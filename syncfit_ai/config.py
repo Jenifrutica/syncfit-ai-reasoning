@@ -1,9 +1,7 @@
 """Runtime configuration for the reasoning kernel.
 
-OpenCode exposes two OpenAI-compatible products that share the same account key:
-OpenCode Go and OpenCode Zen. The product is selected by configuration, not by
-the key itself, so a unified key works on either endpoint. DeepSeek V4.1 Flash is
-available on both.
+OpenCode Go and OpenCode Zen use the same account key. DeepSeek uses Chat
+Completions; GPT-6 Luna is the configured outage fallback and uses Responses.
 
 Everything is configurable by environment variable (or a local `.env`); the API
 key is never hardcoded.
@@ -29,6 +27,7 @@ PRODUCT_ALIASES: dict[str, str] = {
 
 DEFAULT_PRODUCT = "go"
 DEFAULT_MODEL = "deepseek-v4-pro"
+DEFAULT_FALLBACK_MODEL = "gpt-6-luna"
 DEFAULT_TEMPERATURE = 0.25
 DEFAULT_TIMEOUT = 120.0
 DEFAULT_USER_AGENT = "syncfit-ai-reasoning/0.1.0"
@@ -69,6 +68,7 @@ class ReasoningConfig:
     product: str = DEFAULT_PRODUCT
     base_url: str = PRODUCT_BASE_URLS[DEFAULT_PRODUCT]
     model: str = DEFAULT_MODEL
+    fallback_model: str | None = DEFAULT_FALLBACK_MODEL
     temperature: float = DEFAULT_TEMPERATURE
     timeout: float = DEFAULT_TIMEOUT
     user_agent: str = DEFAULT_USER_AGENT
@@ -109,6 +109,10 @@ class ReasoningConfig:
             product=product,
             base_url=base_url,
             model=source.get("REASONING_MODEL", DEFAULT_MODEL),
+            fallback_model=(
+                source.get("REASONING_FALLBACK_MODEL", DEFAULT_FALLBACK_MODEL).strip()
+                or None
+            ),
             temperature=float(source.get("REASONING_TEMPERATURE", DEFAULT_TEMPERATURE)),
             timeout=float(source.get("REASONING_TIMEOUT", DEFAULT_TIMEOUT)),
             user_agent=source.get("REASONING_USER_AGENT", DEFAULT_USER_AGENT),
@@ -122,6 +126,7 @@ __all__ = [
     "PRODUCT_ALIASES",
     "DEFAULT_PRODUCT",
     "DEFAULT_MODEL",
+    "DEFAULT_FALLBACK_MODEL",
     "DEFAULT_TEMPERATURE",
     "DEFAULT_TIMEOUT",
     "DEFAULT_USER_AGENT",

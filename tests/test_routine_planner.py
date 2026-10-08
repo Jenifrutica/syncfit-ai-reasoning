@@ -86,6 +86,31 @@ def test_planner_ignores_unknown_ids_and_falls_back():
     assert all(entry.exercise_id for entry in result.routine)
 
 
+def test_planner_reports_gpt6_when_client_used_backup_model():
+    core = make_core_result(InferredPhase.FOLLICULAR, k_load=0.95)
+    client = FakeClient(response=model_output("goblet-squat"))
+    client.last_model = "gpt-6-luna"
+    planner = RoutinePlanner(client)
+
+    planner.plan(request(["QUADRICEPS"]), core)
+
+    assert planner.last_engine == "gpt-6-luna"
+
+
+def test_planner_returns_deterministic_routine_when_models_fail():
+    class FailingClient:
+        def complete(self, system_prompt, user_prompt, session_id=None):
+            raise RuntimeError("provider unavailable")
+
+    core = make_core_result(InferredPhase.FOLLICULAR, k_load=0.95)
+    planner = RoutinePlanner(FailingClient())
+
+    result = planner.plan(request(["QUADRICEPS"]), core)
+
+    assert result.routine
+    assert planner.last_engine == "deterministic"
+
+
 def test_localized_output_in_spanish():
     core = make_core_result(InferredPhase.FOLLICULAR, k_load=0.95)
     planner = RoutinePlanner(FakeClient(response=model_output("goblet-squat")))

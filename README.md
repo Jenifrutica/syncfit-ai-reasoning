@@ -8,9 +8,9 @@ Guarantee clinical reliability by **never** delegating the mathematical calculat
 
 ## What belongs here
 
-- **LLM client** (`client/`): OpenCode Go through the OpenAI-compatible Python SDK, using **DeepSeek V4.1 Flash** (`base_url=https://opencode.ai/zen/go/v1`).
-- **Prompts** (`prompts/`): the deterministic system prompt that defines the kernel as an analytical engine, not a chatbot, with temperature 0.1.
-- **Strict output** (`schema/`): JSON Mode responses (`response_format={"type": "json_object"}`) validated against the schema in [`syncfit-contracts`](https://github.com/Jenifrutica/syncfit-contracts).
+- **LLM client** (`client/`): OpenCode Go through the OpenAI Python SDK, using DeepSeek via Chat Completions and GPT-6 Luna via Responses on transient failures.
+- **Prompts** (`prompts/`): the system prompt that defines the kernel as an analytical engine, not a chatbot.
+- **Strict output** (`schema/`): JSON object responses from Chat Completions or Responses, validated against the schema in [`syncfit-contracts`](https://github.com/Jenifrutica/syncfit-contracts).
 - **Biomechanical rules** (`rules/`): deterministic safety net that blocks high-impact / high joint-risk exercises in the ovulatory phase or advanced pregnancy, blocks supine exercises from week 16, and preserves the numeric `k_load`.
 - **Orchestrator** (`auditor.py`): `BiomechanicalAuditor` ties prompts, client, rules and validation together.
 - Reference pipeline that simulates telemetry, runs `syncfit-core` and prints the adapted JSON.
@@ -31,9 +31,11 @@ All are declared as git dependencies in `pyproject.toml`, so installing this pac
 
 ## Configuration
 
-OpenCode Go and OpenCode Zen are two OpenAI-compatible products that **share the
-same account key**. The product is chosen by configuration, not by the key, so a
-unified key works on either endpoint. DeepSeek V4.1 Flash is available on both.
+OpenCode Go and OpenCode Zen share an account key. The primary DeepSeek model is
+called through Chat Completions. On transient provider/network errors the client
+tries GPT-6 Luna through the Responses API, then lets the planner use its existing
+deterministic routine if both model calls fail. The generated prescription still
+passes deterministic safety enforcement.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -41,12 +43,14 @@ unified key works on either endpoint. DeepSeek V4.1 Flash is available on both.
 | `REASONING_PRODUCT` | `go` | `go` or `zen`; selects the endpoint |
 | `REASONING_AUTO_PRODUCT_FALLBACK` | `true` | If the product rejects the key, try the other product |
 | `REASONING_BASE_URL` | product endpoint | Explicit endpoint override |
-| `REASONING_MODEL` | `deepseek-v4.1-flash` | Model id |
-| `REASONING_TEMPERATURE` | `0.1` | Deterministic temperature |
-| `REASONING_TIMEOUT` | `60` | Request timeout (seconds) |
+| `REASONING_MODEL` | `deepseek-v4-pro` | Primary model id |
+| `REASONING_FALLBACK_MODEL` | `gpt-6-luna` | Responses API model for transient primary failures; empty disables it |
+| `REASONING_TEMPERATURE` | `0.25` | Chat Completions temperature |
+| `REASONING_TIMEOUT` | `120` | Request timeout (seconds) |
 
-The key is read from (1) the environment, (2) a local `.env` file, in that order.
-It is never stored in the repository.
+The same OpenCode key is used for both model calls. The key is read from (1) the
+environment, (2) a local `.env` file, in that order. It is never stored in the
+repository.
 
 ```bash
 cp .env.example .env
@@ -162,7 +166,7 @@ Python 3.11+, OpenAI Python SDK (OpenCode Go endpoint), Pydantic v2, `syncfit-co
 
 ### Requirements
 
-- [x] Integrate DeepSeek V4.1 Flash via the OpenAI-compatible OpenCode Go SDK.
+- [x] Integrate DeepSeek via OpenCode Go and GPT-6 Luna Responses fallback on transient provider errors.
 - [x] Implement the deterministic system prompt (temperature 0.1, analytical engine, not a chatbot).
 - [x] Enforce JSON Mode and validate the output against `syncfit-contracts`.
 - [x] Implement the biomechanical rule engine (block high-risk exercises in the ovulatory phase and advanced pregnancy; block supine exercises from week 16).
@@ -189,13 +193,13 @@ The routine is built from **movement patterns**, not a flat exercise list:
 - `build_prescription()` (deterministic core): one exercise per pattern (no
   duplicates), required-pattern coverage per muscle group, compounds first,
   contraindicated patterns excluded, gym-machine patterns prioritised.
-- `RoutinePlanner.plan()` (**DeepSeek designs**): the local assessment + profile +
+- `RoutinePlanner.plan()` (**DeepSeek designs; GPT-6 Luna backs up transient outages**): the local assessment + profile +
   gym machines + evidence go to `deepseek-v4-pro` (OpenCode Go), which returns the
   full routine (patterns, exercises, order, sets, reps, rest, rationale).
   `enforce_prescription()` then normalizes ids, enforces pattern coverage / no
   duplicate pattern / compounds-first / contraindications / machine-first and
-  echoes `k_load` (never recomputed). Fallback: `build_prescription` when the AI
-  is unavailable.
+  echoes `k_load` (never recomputed). If both model calls fail, the planner
+  returns the deterministic `build_prescription` result.
 
 Required patterns (examples): GLUTES = hinge, lunge, hip_thrust, glute_kickback,
 hip_abduction.
@@ -226,20 +230,23 @@ All code, comments, documentation and commits in this repository are written in 
 
 ## Handoff for the team
 
-**Role.** Cloud AI (DeepSeek via OpenCode Go). Designs the routine from the
-local-model assessment + profile + gym equipment + evidence, and audits exercises.
+**Role.** Cloud AI (DeepSeek primary, GPT-6 Luna backup via OpenCode Go). Designs
+the routine from the local-model assessment + profile + gym equipment + evidence,
+and audits exercises.
 
 **Run / test.** `pip install -e .` · `pytest`. Configure `REASONING_API_KEY`,
-`REASONING_MODEL=deepseek-v4-pro`, `REASONING_PRODUCT=go`.
+`REASONING_MODEL=deepseek-v4-pro`, `REASONING_FALLBACK_MODEL=gpt-6-luna`,
+`REASONING_PRODUCT=go`.
 
 **Entry points.** `RoutinePlanner.plan()` (calls `build_design_prompt` →
 `enforce_prescription`), deterministic fallback `build_prescription`,
 `alternatives_for()` (UI Change list), `recommend_supplements`,
 `analyze_machine`, `analyze_symptoms`, `order_routine`.
 
-**Key idea.** DeepSeek reasons; a deterministic layer enforces patterns, safety,
-equipment order and echoes `k_load`. `planner.last_engine` is `deepseek` or
-`deterministic` so the backend can report `engine_used`.
+**Key idea.** DeepSeek reasons first; GPT-6 Luna is attempted on transient
+provider/network failures. A deterministic layer enforces patterns, safety,
+equipment order and echoes `k_load`. `planner.last_engine` reports `deepseek`,
+`gpt-6-luna`, or `deterministic` if both model calls fail.
 
 ## Context for a new session
 
@@ -248,10 +255,11 @@ decision (`BiomechanicalAuditor`) and routine generation by muscle group
 (`RoutinePlanner`), both with a deterministic safety layer.
 
 **Stack.** Python 3.11+, OpenAI SDK pointed at **OpenCode Go**
-(`https://opencode.ai/zen/go/v1`, model `deepseek-v4.1-flash`), Pydantic.
+(`https://opencode.ai/zen/go/v1`), Pydantic.
 
 **Config.** `REASONING_API_KEY` (or `OPENCODE_API_KEY`), `REASONING_PRODUCT`
-(`go`|`zen`, auto-fallback), model, temperature 0.1; reads `.env`.
+(`go`|`zen`, auto product fallback), `REASONING_MODEL` and
+`REASONING_FALLBACK_MODEL`; reads `.env`.
 
 **Layout.** `syncfit_ai/`: `client/` (OpenCodeGoClient, FakeClient), `prompts/`,
 `schema/`, `rules/`, `routine.py` (RoutinePlanner, enrich, offline), `ordering.py`
@@ -267,7 +275,7 @@ against `AIReasoningResponse`/`RoutineResponse`. Tests offline via FakeClient.
 
 ## Roadmap · Qué falta (español)
 
-> Estado: **implementado** (cliente OpenCode/DeepSeek, planner, reglas, alternativas).
+> Estado: **implementado** (cliente OpenCode con respaldo GPT-6 Luna, planner, reglas, alternativas).
 
 - (Opcional) Tests para `analyze_machine` / `analyze_symptoms`.
 - (Opcional) Usar realmente la `PriorityQueue` exportada.

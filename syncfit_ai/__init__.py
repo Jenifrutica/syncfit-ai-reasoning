@@ -2,8 +2,9 @@
 
 Turns the deterministic output of `syncfit-core` (phase, fatigue level, k_load)
 plus the programmed routine into a structured, adapted prescription using
-OpenCode Go (DeepSeek V4.1 Flash) in strict JSON mode. A deterministic rule
-engine guarantees that the numeric decision is never altered by the model.
+OpenCode Go (DeepSeek with GPT-6 Luna on transient failures) in strict JSON
+mode. A deterministic rule engine guarantees that the numeric decision is never
+altered by a model.
 """
 
 from .analyze import analyze_machine, analyze_symptoms

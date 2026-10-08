@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "syncfit-ai-reasoning"
 version = "0.3.0"
-description = "SyncFit Edge cloud reasoning kernel: DeepSeek biomechanical audit with strict JSON Mode."
+description = "SyncFit Edge reasoning kernel with DeepSeek, GPT-6 Luna fallback, and deterministic safety enforcement."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
 dependencies = [
-    "openai>=1.0",
+    "openai>=1.68.0",
     "pydantic>=2.0",
     "syncfit-contracts @ git+https://github.com/Jenifrutica/syncfit-contracts.git#subdirectory=python",
     "syncfit-core @ git+https://github.com/Jenifrutica/syncfit-core.git",
