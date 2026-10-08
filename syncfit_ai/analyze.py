@@ -32,11 +32,37 @@ SYMPTOM_SYSTEM = (
 )
 
 
+MACHINE_TYPES = {"FREE_WEIGHT", "MACHINE", "SMITH", "CABLE", "BODYWEIGHT", "ASSISTED", "BAND", "NONE"}
+WEIGHT_FACTOR_RANGE = (0.25, 3.0)
+
+
+def _clean_machine_info(info: Any) -> dict:
+    """Drop fields the model returned with an invalid value so callers use their defaults."""
+    if not isinstance(info, dict):
+        return {}
+    clean = dict(info)
+    if str(clean.get("inferred_type", "")).upper() in MACHINE_TYPES:
+        clean["inferred_type"] = str(clean["inferred_type"]).upper()
+    else:
+        clean.pop("inferred_type", None)
+    try:
+        factor = float(clean["weight_factor"])
+        low, high = WEIGHT_FACTOR_RANGE
+        if not low <= factor <= high:
+            raise ValueError
+        clean["weight_factor"] = factor
+    except (KeyError, TypeError, ValueError):
+        clean.pop("weight_factor", None)
+    ids = clean.get("exercise_ids")
+    clean["exercise_ids"] = [str(i) for i in ids if i] if isinstance(ids, list) else []
+    return clean
+
+
 def analyze_machine(name: str, description: str | None = None, language: str = "EN", client: Any | None = None) -> dict:
     """Infer a machine's type, localized name/purpose, exercises and weight factor."""
     client = client or OpenCodeGoClient()
     user = f"language={language}\nname={name}\ndescription={description or ''}"
-    return client.complete(MACHINE_SYSTEM, user)
+    return _clean_machine_info(client.complete(MACHINE_SYSTEM, user))
 
 
 def analyze_symptoms(symptoms: list[dict], language: str = "EN", client: Any | None = None) -> dict:
