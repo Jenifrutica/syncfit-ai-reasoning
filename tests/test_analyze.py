@@ -26,3 +26,30 @@ def test_analyze_symptoms_passes_payload():
     result = analyze_symptoms([{"id": "cramps", "level": 4}], "EN", client=client)
     assert result["absolute_contraindication"] is False
     assert "cramps" in client.calls[0]["user"]
+
+
+def test_analyze_machine_drops_invalid_values():
+    response = {
+        "inferred_type": "spaceship",
+        "name": {"en": "Leg press"},
+        "exercise_ids": ["leg-press", None, ""],
+        "weight_factor": "1.4x",
+    }
+    info = analyze_machine("leg press", client=FakeClient(response=response))
+    assert "inferred_type" not in info
+    assert "weight_factor" not in info
+    assert info["exercise_ids"] == ["leg-press"]
+    assert info["name"]["en"] == "Leg press"
+
+
+def test_analyze_machine_normalizes_valid_values():
+    response = {"inferred_type": "cable", "weight_factor": "0.8", "exercise_ids": ["cable-row"]}
+    info = analyze_machine("cable row", client=FakeClient(response=response))
+    assert info["inferred_type"] == "CABLE"
+    assert info["weight_factor"] == 0.8
+
+
+def test_analyze_machine_rejects_out_of_range_factor():
+    info = analyze_machine("x", client=FakeClient(response={"weight_factor": 50}))
+    assert "weight_factor" not in info
+    assert info["exercise_ids"] == []
