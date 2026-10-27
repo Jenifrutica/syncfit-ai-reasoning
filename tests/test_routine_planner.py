@@ -69,6 +69,37 @@ def test_planner_excludes_supine_in_gestational_week_16():
     assert all(not entry.blocked for entry in result.routine)
 
 
+def test_alternatives_can_exclude_supine_from_week_16():
+    from syncfit_ai import alternatives_for
+
+    for base in ("flat-bench-press", "glute-bridge", "dead-bug", "hip-thrust"):
+        options = alternatives_for(base, None, "EN", exclude_supine=True)
+        assert all(not option["supine"] for option in options)
+
+
+def test_planner_keeps_supine_before_gestational_week_16():
+    core = make_core_result(InferredPhase.TRIMESTER_2, modality=Modality.GESTATIONAL, day=15, k_load=0.85)
+    planner = RoutinePlanner(FakeClient(response=model_output("flat-bench-press")))
+    result = planner.plan(request(["CHEST"]), core)
+    assert any(entry.exercise_id == "flat-bench-press" and not entry.blocked for entry in result.routine)
+
+
+def test_planner_allows_hip_thrust_in_gestational_week_16():
+    core = make_core_result(InferredPhase.TRIMESTER_2, modality=Modality.GESTATIONAL, day=16, k_load=0.85)
+    planner = RoutinePlanner(FakeClient(response=model_output("hip-thrust")))
+    result = planner.plan(request(["GLUTES"]), core)
+    assert any(entry.exercise_id == "hip-thrust" and not entry.blocked for entry in result.routine)
+    assert all(not entry.blocked for entry in result.routine)
+
+
+def test_planner_blocks_glute_bridge_from_gestational_week_16():
+    core = make_core_result(InferredPhase.TRIMESTER_2, modality=Modality.GESTATIONAL, day=16, k_load=0.85)
+    planner = RoutinePlanner(FakeClient(response=model_output("glute-bridge")))
+    result = planner.plan(request(["GLUTES"]), core)
+    assert all(not entry.blocked for entry in result.routine)
+    assert all(entry.exercise_id != "glute-bridge" for entry in result.routine)
+
+
 def test_planner_completes_missing_groups():
     core = make_core_result(InferredPhase.FOLLICULAR, k_load=0.95)
     # Model only returns a GLUTES exercise, but QUADRICEPS was requested too.

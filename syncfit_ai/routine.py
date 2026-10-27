@@ -114,7 +114,21 @@ def _max_impact(core_result: EngineResult | None) -> str:
     return "HIGH"
 
 
+def _blocks_supine(request: RoutineRequest, core_result: EngineResult | None) -> bool:
+    """Only gestational week 16+ blocks supine work (prolonged dorsal decubitus)."""
+    modality = _value(getattr(request, "modality", "") or "")
+    day = getattr(request, "day_or_week", None)
+    if core_result is not None:
+        if not modality:
+            modality = _value(core_result.features.modality)
+        if day is None:
+            day = core_result.features.day_or_week
+    return modality == "GESTATIONAL" and (day or 0) >= 16
+
+
 def _is_supine(exercise: Exercise) -> bool:
+    if bool(getattr(exercise, "supine", False)):
+        return True
     name = exercise.name.en.lower()
     if "incline" in name:
         return False
@@ -166,12 +180,13 @@ def _entry_from_exercise(
     reps: int = 10,
     weight: float = 0.0,
     rationale: str = "",
+    block_supine: bool = False,
 ) -> dict[str, Any]:
     localized = _localized(exercise, language)
     blocked = _rank(exercise.impact) > _rank(max_impact)
     block_reason = ""
     substitute = ""
-    if not blocked and _is_supine(exercise):
+    if not blocked and block_supine and _is_supine(exercise):
         blocked = True
         block_reason = _reason("supine", language)
     elif blocked:
@@ -195,6 +210,13 @@ def _entry_from_exercise(
         "impact": _value(exercise.impact),
         "description": localized["description"],
         "how_to": _localized_text(exercise.how_to or exercise.description),
+        "setup": _localized_text(exercise.setup)
+        if getattr(exercise, "setup", None)
+        else None,
+        "pregnancy_tip": _localized_text(exercise.pregnancy_tip)
+        if getattr(exercise, "pregnancy_tip", None)
+        else None,
+        "supine": bool(getattr(exercise, "supine", False)),
         "tips": [_localized_text(t) for t in (exercise.tips or [])],
         "image_url": exercise.image_url,
         "media_url": exercise.media_url,
@@ -264,6 +286,7 @@ def enrich_routine(
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
     max_impact = _max_impact(core_result)
+    block_supine = _blocks_supine(request, core_result)
     by_id = {exercise.id: exercise for exercise in catalog}
     by_name: dict[str, Exercise] = {}
     for exercise in catalog:
@@ -288,6 +311,7 @@ def enrich_routine(
             series=item.get("series_adapted", 3),
             reps=item.get("reps_adapted", 10),
             weight=item.get("weight_suggested_kg", 0.0),
+            block_supine=block_supine,
         )
         blocked_any = blocked_any or entry["blocked"]
         covered.update(_value(g) for g in exercise.muscle_groups)
@@ -316,7 +340,7 @@ def enrich_routine(
     warmup: list[dict[str, Any]] = []
     if request.include_warmup:
         warmup = [
-            _entry_from_exercise(e, language, max_impact, groups)
+            _entry_from_exercise(e, language, max_impact, groups, block_supine=block_supine)
             for e in _select_warmup(groups, 2)
         ]
 
@@ -467,12 +491,13 @@ def _safe(
     blocked_patterns: set[str],
     equipment: set[str] | None = None,
     allowed_ids: set[str] | None = None,
+    block_supine: bool = False,
 ) -> bool:
     if _value(getattr(exercise, "role", "MAIN")) != "MAIN":
         return False
     if _rank(exercise.impact) > _rank(max_impact):
         return False
-    if _is_supine(exercise):
+    if block_supine and _is_supine(exercise):
         return False
     if patterns_of(exercise) in blocked_patterns:
         return False
@@ -509,6 +534,7 @@ def build_prescription(
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
     max_impact = _max_impact(core_result)
+    block_supine = _blocks_supine(request, core_result)
     blocked = {_value(p) for p in contraindicated_patterns}
     preferred = {str(x) for x in preferred_exercise_ids}
     equipment = {_value(k) for k in equipment_keys} if equipment_keys is not None else None
@@ -543,7 +569,7 @@ def build_prescription(
         )
         for pattern in group_patterns:
             candidates = [
-                e for e in exercises_for_pattern(pattern, [group]) if _safe(e, max_impact, blocked)
+                e for e in exercises_for_pattern(pattern, [group]) if _safe(e, max_impact, blocked, block_supine=block_supine)
             ]
             if not candidates:
                 continue
@@ -560,7 +586,7 @@ def build_prescription(
                 break
         if count < per_group:
             for exercise in exercises_for_groups([group]):
-                if exercise.id in used_ids or not _safe(exercise, max_impact, blocked, equipment, allowed):
+                if exercise.id in used_ids or not _safe(exercise, max_impact, blocked, equipment, allowed, block_supine=block_supine):
                     continue
                 pattern = patterns_of(exercise)
                 if pattern and pattern in used_patterns:
@@ -583,6 +609,7 @@ def build_prescription(
             series=_scheme(request.objective)["sets"],
             reps=_scheme(request.objective)["reps"],
             rationale=_pattern_reason(patterns_of(exercise), language),
+            block_supine=block_supine,
         )
         for exercise in selected
     ]
@@ -590,7 +617,7 @@ def build_prescription(
     warmup: list[dict[str, Any]] = []
     if request.include_warmup:
         warmup = [
-            _entry_from_exercise(e, language, max_impact, groups)
+            _entry_from_exercise(e, language, max_impact, groups, block_supine=block_supine)
             for e in _select_warmup(groups, 2)
         ]
 
@@ -668,7 +695,12 @@ def _clamp(value: object, low: int, high: int, default: int) -> int:
 
 
 def _entry_from_model_item(
-    exercise: Exercise, item: dict[str, Any], language: str, max_impact: str, groups: list[str]
+    exercise: Exercise,
+    item: dict[str, Any],
+    language: str,
+    max_impact: str,
+    groups: list[str],
+    block_supine: bool = False,
 ) -> dict[str, Any]:
     series = _clamp(item.get("series"), 1, 6, 3)
     reps = _clamp(item.get("reps"), 1, 30, 10)
@@ -681,6 +713,7 @@ def _entry_from_model_item(
         reps=reps,
         weight=item.get("weight_suggested_kg", 0.0),
         rationale=str(item.get("rationale", "")),
+        block_supine=block_supine,
     )
     rest = _clamp(item.get("rest_seconds"), 15, 300, entry["rest_seconds"])
     sets = _sets_from(entry["role"], series, reps, rest, entry["weight_suggested_kg"])
@@ -787,6 +820,7 @@ def enforce_prescription(
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
     max_impact = _max_impact(core_result)
+    block_supine = _blocks_supine(request, core_result)
     blocked = {_value(p) for p in contraindicated_patterns}
     equipment = {_value(k) for k in equipment_keys} if equipment_keys is not None else None
     allowed = {str(x) for x in available_exercise_ids or []}
@@ -805,14 +839,18 @@ def enforce_prescription(
         if not isinstance(item, dict):
             continue
         exercise = resolve(item.get("exercise_id")) or resolve(item.get("exercise_original"))
-        if exercise is None or not _safe(exercise, max_impact, blocked):
+        if exercise is None or not _safe(exercise, max_impact, blocked, block_supine=block_supine):
             continue
         pattern = patterns_of(exercise)
         if pattern and pattern in seen:
             continue
         if pattern:
             seen.add(pattern)
-        entries.append(_entry_from_model_item(exercise, item, language, max_impact, groups))
+        entries.append(
+            _entry_from_model_item(
+                exercise, item, language, max_impact, groups, block_supine=block_supine
+            )
+        )
 
     # Machine-first: force the gym machine variant for patterns it covers.
     machine_pattern: dict[str, str] = {}
@@ -821,7 +859,7 @@ def enforce_prescription(
             machine_pattern.setdefault(str(machine["pattern"]), str(machine["exercise_id"]))
     for pattern, exercise_id in machine_pattern.items():
         exercise = global_by_id.get(_normalize_id(exercise_id))
-        if exercise is None or not _safe(exercise, max_impact, blocked):
+        if exercise is None or not _safe(exercise, max_impact, blocked, block_supine=block_supine):
             continue
         index = next((i for i, e in enumerate(entries) if e.get("movement_pattern") == pattern), None)
         if index is not None:
@@ -831,13 +869,16 @@ def enforce_prescription(
                     exercise, language, max_impact, groups,
                     series=current["series_adapted"], reps=current["reps_adapted"],
                     weight=current["weight_suggested_kg"], rationale=current.get("rationale", ""),
+                    block_supine=block_supine,
                 )
                 rebuilt["sets"] = _sets_from(rebuilt["role"], current["series_adapted"], current["reps_adapted"],
                                              current["rest_seconds"], rebuilt["weight_suggested_kg"])
                 rebuilt["estimated_seconds"] = sum(s["estimated_seconds"] for s in rebuilt["sets"])
                 entries[index] = rebuilt
         elif len(entries) < target:
-            entry = _entry_from_exercise(exercise, language, max_impact, groups)
+            entry = _entry_from_exercise(
+                exercise, language, max_impact, groups, block_supine=block_supine
+            )
             entries.append(entry)
             seen.add(pattern)
 
@@ -890,6 +931,8 @@ def alternatives_for(
     exercise_id: str,
     equipment_keys: Iterable[str] | None = None,
     language: str = "EN",
+    *,
+    exclude_supine: bool = False,
 ) -> list[dict[str, Any]]:
     """Ordered replacement options for an exercise (for the UI "Change" button).
 
@@ -911,7 +954,9 @@ def alternatives_for(
 
     pool = [
         e for e in load_exercises()
-        if e.id != exercise_id and (patterns_of(e) == pattern or e.id in family)
+        if e.id != exercise_id
+        and (patterns_of(e) == pattern or e.id in family)
+        and not (exclude_supine and _is_supine(e))
     ]
 
     def sort_key(exercise: Exercise) -> tuple:
@@ -931,6 +976,13 @@ def alternatives_for(
                 "available": is_available(exercise),
                 "variant_of": getattr(exercise, "variant_of", None),
                 "image_url": exercise.image_url,
+                "supine": bool(getattr(exercise, "supine", False)),
+                "setup": _localized_text(exercise.setup)
+                if getattr(exercise, "setup", None)
+                else None,
+                "pregnancy_tip": _localized_text(exercise.pregnancy_tip)
+                if getattr(exercise, "pregnancy_tip", None)
+                else None,
             }
         )
     return options
@@ -992,6 +1044,7 @@ class RoutinePlanner:
             return skeleton
         catalog = exercises_for_groups(groups)
         max_impact = _max_impact(core_result)
+        block_supine = _blocks_supine(request, core_result)
 
         preferred_ids = preferred or set()
         slots: list[dict[str, Any]] = []
@@ -1006,7 +1059,7 @@ class RoutinePlanner:
                 candidates = sorted(
                     e.id
                     for e in catalog
-                    if _safe(e, max_impact, blocked, equipment, allowed) and patterns_of(e) == pattern
+                    if _safe(e, max_impact, blocked, equipment, allowed, block_supine=block_supine) and patterns_of(e) == pattern
                 )
             allowed[str(index)] = set(candidates)
             slots.append(
@@ -1061,6 +1114,7 @@ class RoutinePlanner:
                 reps=current.get("reps_adapted", 10),
                 weight=current.get("weight_suggested_kg", 0.0),
                 rationale=_pattern_reason(patterns_of(exercise), _value(request.language)),
+                block_supine=block_supine,
             )
             # Preserve the gym machine mapping decided by the backend, if any.
             for key in ("machine_id", "machine_name", "image_url"):

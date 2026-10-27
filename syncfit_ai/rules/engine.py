@@ -32,7 +32,16 @@ HIGH_IMPACT_KEYWORDS = (
     "burpee",
     "sprint",
 )
-SUPINE_KEYWORDS = ("supine", "decubito", "decúbito", "lying", "flat bench")
+SUPINE_KEYWORDS = (
+    "supine",
+    "decubito",
+    "decúbito",
+    "lying",
+    "flat bench",
+    "glute bridge",
+    "puente de gluteo",
+    "puente de glúteo",
+)
 
 SUBSTITUTES = {
     "squat": "Controlled goblet squat on a stable box",
