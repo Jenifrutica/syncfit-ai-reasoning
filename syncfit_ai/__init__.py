@@ -7,7 +7,12 @@ mode. A deterministic rule engine guarantees that the numeric decision is never
 altered by a model.
 """
 
-from .analyze import analyze_machine, analyze_symptoms
+from .analyze import (
+    analyze_machine,
+    analyze_symptoms,
+    interpret_symptom_text,
+    sanitize_symptom_analysis,
+)
 from .auditor import BiomechanicalAuditor
 from .client import FakeClient, OpenCodeGoClient, OpenCodeGoError, ReasoningClient
 from .config import ReasoningConfig
@@ -41,6 +46,8 @@ __all__ = [
     "BiomechanicalAuditor",
     "analyze_machine",
     "analyze_symptoms",
+    "interpret_symptom_text",
+    "sanitize_symptom_analysis",
     "ReasoningClient",
     "OpenCodeGoClient",
     "OpenCodeGoError",

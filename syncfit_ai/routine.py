@@ -699,6 +699,7 @@ def build_design_prompt(
     gym_machines: list[dict[str, Any]] | None,
     contraindicated: set[str],
     equipment_keys: Iterable[str] | None = None,
+    symptom_notes: str | None = None,
 ) -> tuple[str, str]:
     """The configured generative model designs a routine from state and evidence."""
     language = _value(request.language)
@@ -732,6 +733,7 @@ def build_design_prompt(
         "autonomic_status": (assessment or {}).get("autonomic_status"),
         "articular_risk_pct": (assessment or {}).get("articular_risk_pct"),
         "contraindicated_patterns": sorted(contraindicated),
+        "reported_symptoms": (symptom_notes or "").strip()[:1000] or None,
         "required_patterns": wanted_patterns,
         "gym_machines": gym_machines or [],
         "gym_equipment": sorted({str(k) for k in equipment_keys}) if equipment_keys is not None else None,
@@ -751,6 +753,8 @@ def build_design_prompt(
         "- Order compounds before isolation; activation/warm-up first.\n"
         "- Exclude contraindicated patterns; respect phase safety (no high impact in ovulatory/3rd trimester,\n"
         "  no supine from gestational week 16).\n"
+        "- If reported_symptoms is present, avoid every exercise that involves or aggravates them;\n"
+        "  prefer safer catalog alternatives.\n"
         "- Equipment filters, in order: (1) exercises covered by the gym machines;\n"
         "  (2) free exercises whose required_equipment is available in gym_equipment\n"
         "  (bench enables Bulgarian/step-ups; dumbbell/barbell/smith as registered);\n"
@@ -949,6 +953,7 @@ class RoutinePlanner:
         core_result: EngineResult | None,
         contraindicated: tuple[str, ...],
         preferred: tuple[str, ...],
+        symptom_notes: str | None = None,
     ) -> str:
         return json.dumps(
             {
@@ -961,6 +966,7 @@ class RoutinePlanner:
                 "k_load": core_result.k_load if core_result else None,
                 "contra": sorted(contraindicated),
                 "preferred": sorted(preferred),
+                "symptoms": (symptom_notes or "").strip(),
             },
             sort_keys=True,
         )
@@ -1076,10 +1082,11 @@ class RoutinePlanner:
         assessment: dict[str, Any] | None = None,
         equipment_keys: Iterable[str] | None = None,
         available_exercise_ids: Iterable[str] | None = None,
+        symptom_notes: str | None = None,
     ) -> RoutineResponse:
         contraindicated = tuple(sorted(_value(p) for p in contraindicated_patterns))
         preferred = tuple(sorted(str(p) for p in preferred_exercise_ids))
-        key = self._key(request, core_result, contraindicated, preferred)
+        key = self._key(request, core_result, contraindicated, preferred, symptom_notes)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
@@ -1098,7 +1105,13 @@ class RoutinePlanner:
         enriched = skeleton
         try:
             system, user = build_design_prompt(
-                request, core_result, assessment, gym_machines, set(contraindicated), equipment_keys
+                request,
+                core_result,
+                assessment,
+                gym_machines,
+                set(contraindicated),
+                equipment_keys,
+                symptom_notes,
             )
             raw = self._client.complete(system, user, session_id=request.session_id)
             if isinstance(raw, dict) and raw.get("routine"):
