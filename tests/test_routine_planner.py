@@ -226,3 +226,32 @@ def test_enforce_prescription_normalizes_and_enforces_machine_first():
     assert hip["exercise_id"] == "hip-thrust-machine"  # machine forced
     assert payload["routine"][0]["compound"] is True  # compounds first
     assert payload["alerts"] and "Glute hypertrophy" in payload["alerts"][0]
+
+
+def test_planner_uses_the_symptom_context_and_the_model_warmup():
+    core = make_core_result(InferredPhase.FOLLICULAR)
+    client = FakeClient(
+        response={
+            "summary": "knee-friendly quad work",
+            "warmup": [{"exercise_id": "cat-cow", "series": 2, "reps": 10, "rest_seconds": 30}],
+            "routine": [
+                {"exercise_id": "goblet-squat", "series": 3, "reps": 10, "weight_suggested_kg": 0},
+            ],
+        }
+    )
+    planner = RoutinePlanner(client)
+    result = planner.plan(
+        request(["QUADRICEPS"]),
+        core,
+        symptom_context={
+            "overall_pain": 3,
+            "symptoms": [{"id": "knee_pain", "severity": 3, "guidance": "keep it pain-free"}],
+        },
+    )
+
+    # The model receives the pain context instead of a blanket ban.
+    prompt = client.calls[0]["user"]
+    assert "knee_pain" in prompt
+    assert "overall_pain" in prompt
+    # The model's warm-up is used when it is a valid activation/mobility id.
+    assert any(entry.exercise_id == "cat-cow" for entry in result.warmup), [entry.exercise_id for entry in result.warmup]

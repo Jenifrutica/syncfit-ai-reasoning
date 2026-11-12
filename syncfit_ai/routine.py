@@ -791,6 +791,7 @@ def build_design_prompt(
     contraindicated: set[str],
     equipment_keys: Iterable[str] | None = None,
     symptom_notes: str | None = None,
+    symptom_context: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """The configured generative model designs a routine from state and evidence."""
     language = _value(request.language)
@@ -799,6 +800,11 @@ def build_design_prompt(
     scheme = _scheme(request.objective)
     wanted_patterns = [p for p in required_patterns(groups) if p not in contraindicated]
 
+    warmup_catalog = [
+        {"id": e.id, "name": e.name.en, "role": _value(getattr(e, "role", "MAIN"))}
+        for e in load_exercises()
+        if _value(getattr(e, "role", "MAIN")) in ("WARMUP", "ACTIVATION")
+    ]
     catalog_rows = [
         {
             "id": e.id,
@@ -825,6 +831,8 @@ def build_design_prompt(
         "articular_risk_pct": (assessment or {}).get("articular_risk_pct"),
         "contraindicated_patterns": sorted(contraindicated),
         "reported_symptoms": (symptom_notes or "").strip()[:1000] or None,
+        "symptom_context": symptom_context or {},
+        "warmup_catalog": warmup_catalog,
         "required_patterns": wanted_patterns,
         "gym_machines": gym_machines or [],
         "gym_equipment": sorted({str(k) for k in equipment_keys}) if equipment_keys is not None else None,
@@ -843,11 +851,14 @@ def build_design_prompt(
         "- Cover every required pattern (up to the exercise count). Prefer different movement patterns;\n"
         "  if the count exceeds the patterns the muscle group has, repeat a pattern with a DIFFERENT\n"
         "  exercise (never the same exercise id twice).\n"
-        "- Order compounds before isolation; activation/warm-up first.\n"
+        "- Order compounds before isolation; pick 2 warm-up/activation ids from warmup_catalog.\n"
         "- Exclude contraindicated patterns; respect phase safety (no high impact in ovulatory/3rd trimester,\n"
         "  no supine from gestational week 16).\n"
-        "- If reported_symptoms is present, avoid every exercise that involves or aggravates them;\n"
-        "  prefer safer catalog alternatives.\n"
+        "- Symptoms and pain are context for YOUR decision, not automatic bans. Mild pain (<=3/10):\n"
+        "  keep training the target muscle with pain-free range, controlled tempo and moderate load,\n"
+        "  avoiding only what is likely to aggravate (impact). Moderate (4-6): reduce load/range and\n"
+        "  skip the most aggravating patterns. Severe (>=7) or red flags: do not load; choose gentle\n"
+        "  alternatives. Explain the adaptation in summary and rationale.\n"
         "- Equipment filters, in order: (1) exercises covered by the gym machines;\n"
         "  (2) free exercises whose required_equipment is available in gym_equipment\n"
         "  (bench enables Bulgarian/step-ups; dumbbell/barbell/smith as registered);\n"
@@ -978,6 +989,28 @@ def enforce_prescription(
     entries = order_routine(entries, core_result.phase_inferred.value if core_result else None, language)
 
     warmup = skeleton.get("warmup", []) if request.include_warmup else []
+    model_warmup = model_payload.get("warmup")
+    if request.include_warmup and isinstance(model_warmup, list) and model_warmup:
+        chosen: list[dict[str, Any]] = []
+        used_warmups: set[str] = set()
+        for item in model_warmup:
+            exercise = get_exercise(str(item.get("exercise_id") or "")) if isinstance(item, dict) else None
+            if exercise is None or exercise.id in used_warmups:
+                continue
+            if _value(getattr(exercise, "role", "MAIN")) not in ("WARMUP", "ACTIVATION"):
+                continue
+            if patterns_of(exercise) in blocked or _rank(exercise.impact) > _rank(max_impact):
+                continue
+            used_warmups.add(exercise.id)
+            chosen.append(
+                _entry_from_exercise(
+                    exercise, language, max_impact, groups, block_supine=block_supine
+                )
+            )
+            if len(chosen) >= 2:
+                break
+        if chosen:
+            warmup = chosen
     total = sum(e["estimated_seconds"] for e in warmup + entries)
     alerts: list[str] = []
     summary = model_payload.get("summary")
@@ -1086,6 +1119,7 @@ class RoutinePlanner:
         contraindicated: tuple[str, ...],
         preferred: tuple[str, ...],
         symptom_notes: str | None = None,
+        symptom_context: dict[str, Any] | None = None,
     ) -> str:
         return json.dumps(
             {
@@ -1100,6 +1134,7 @@ class RoutinePlanner:
                 "contra": sorted(contraindicated),
                 "preferred": sorted(preferred),
                 "symptoms": (symptom_notes or "").strip(),
+                "symptom_context": symptom_context or {},
             },
             sort_keys=True,
         )
@@ -1218,10 +1253,11 @@ class RoutinePlanner:
         equipment_keys: Iterable[str] | None = None,
         available_exercise_ids: Iterable[str] | None = None,
         symptom_notes: str | None = None,
+        symptom_context: dict[str, Any] | None = None,
     ) -> RoutineResponse:
         contraindicated = tuple(sorted(_value(p) for p in contraindicated_patterns))
         preferred = tuple(sorted(str(p) for p in preferred_exercise_ids))
-        key = self._key(request, core_result, contraindicated, preferred, symptom_notes)
+        key = self._key(request, core_result, contraindicated, preferred, symptom_notes, symptom_context)
         cached = self._cache.get(key)
         if cached is not None:
             return cached
@@ -1247,6 +1283,7 @@ class RoutinePlanner:
                 set(contraindicated),
                 equipment_keys,
                 symptom_notes,
+                symptom_context,
             )
             raw = self._client.complete(system, user, session_id=request.session_id)
             if isinstance(raw, dict) and raw.get("routine"):
