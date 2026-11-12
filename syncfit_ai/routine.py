@@ -140,6 +140,14 @@ def _max_impact(core_result: EngineResult | None) -> str:
     return "HIGH"
 
 
+def _combined_impact(core_result: EngineResult | None, impact_cap: str | None) -> str:
+    """Phase cap and symptom cap: the stricter one wins."""
+    base = _max_impact(core_result)
+    if not impact_cap:
+        return base
+    return impact_cap if _IMPACT_RANK.get(str(impact_cap), 2) < _IMPACT_RANK[base] else base
+
+
 def _blocks_supine(request: RoutineRequest, core_result: EngineResult | None) -> bool:
     """Only gestational week 16+ blocks supine work (prolonged dorsal decubitus)."""
     modality = _value(getattr(request, "modality", "") or "")
@@ -310,7 +318,6 @@ def enrich_routine(
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
     session = request.session_id or f"day:{datetime.date.today().isoformat()}"
-    rng = random.Random(_seed(session, ",".join(groups), request.exercises_count, request.language))
     max_impact = _max_impact(core_result)
     block_supine = _blocks_supine(request, core_result)
     by_id = {exercise.id: exercise for exercise in catalog}
@@ -550,6 +557,7 @@ def build_prescription(
     preferred_exercise_ids: Iterable[str] = (),
     equipment_keys: Iterable[str] | None = None,
     available_exercise_ids: Iterable[str] | None = None,
+    impact_cap: str | None = None,
 ) -> dict[str, Any]:
     """Deterministic, evidence-based routine driven by movement patterns.
 
@@ -561,7 +569,7 @@ def build_prescription(
     groups = [_value(g) for g in request.muscle_groups]
     session = request.session_id or f"day:{datetime.date.today().isoformat()}"
     rng = random.Random(_seed(session, ",".join(groups), request.exercises_count, request.language))
-    max_impact = _max_impact(core_result)
+    max_impact = _combined_impact(core_result, impact_cap)
     block_supine = _blocks_supine(request, core_result)
     blocked = {_value(p) for p in contraindicated_patterns}
     preferred = {str(x) for x in preferred_exercise_ids}
@@ -616,43 +624,21 @@ def build_prescription(
             if count >= per_group:
                 break
         if count < per_group:
-            # A focused routine may need more exercises than the group has
-            # movement patterns: repeat a pattern with a different exercise
-            # (e.g. back squat + leg press), always picking the least-used
-            # pattern so the routine stays varied.
-            pattern_uses: dict[str, int] = {}
-            for exercise in selected:
+            # One exercise per movement pattern: never two squats or two
+            # lunges in the same routine. If the group has fewer patterns than
+            # the requested count, the routine simply has fewer exercises.
+            for exercise in _focus_catalog([group]):
+                if exercise.id not in focused_ids:
+                    continue
+                if exercise.id in used_ids or not _safe(exercise, max_impact, blocked, equipment, allowed, block_supine=block_supine):
+                    continue
                 pattern = patterns_of(exercise)
-                if pattern:
-                    pattern_uses[pattern] = pattern_uses.get(pattern, 0) + 1
-            while count < per_group:
-                fill = [
-                    exercise
-                    for exercise in _focus_catalog([group])
-                    if exercise.id in focused_ids
-                    and exercise.id not in used_ids
-                    and _safe(exercise, max_impact, blocked, equipment, allowed, block_supine=block_supine)
-                ]
-                if not fill:
-                    break
-                rng.shuffle(fill)
-
-                def fill_key(exercise: Exercise) -> tuple:
-                    pattern = patterns_of(exercise)
-                    return (
-                        pattern_uses.get(pattern, 0),
-                        0 if getattr(exercise, "compound", False) else 1,
-                        0 if exercise.id in preferred else 1,
-                        _availability_rank(exercise, equipment, allowed),
-                    )
-
-                fill.sort(key=fill_key)
-                chosen = fill[0]
-                add(chosen)
-                pattern = patterns_of(chosen)
-                if pattern:
-                    pattern_uses[pattern] = pattern_uses.get(pattern, 0) + 1
+                if pattern and pattern in used_patterns:
+                    continue
+                add(exercise)
                 count += 1
+                if count >= per_group:
+                    break
         if len(selected) >= target:
             break
 
@@ -792,6 +778,7 @@ def build_design_prompt(
     equipment_keys: Iterable[str] | None = None,
     symptom_notes: str | None = None,
     symptom_context: dict[str, Any] | None = None,
+    impact_cap: str | None = None,
 ) -> tuple[str, str]:
     """The configured generative model designs a routine from state and evidence."""
     language = _value(request.language)
@@ -832,6 +819,7 @@ def build_design_prompt(
         "contraindicated_patterns": sorted(contraindicated),
         "reported_symptoms": (symptom_notes or "").strip()[:1000] or None,
         "symptom_context": symptom_context or {},
+        "impact_cap": impact_cap or "HIGH",
         "warmup_catalog": warmup_catalog,
         "required_patterns": wanted_patterns,
         "gym_machines": gym_machines or [],
@@ -848,9 +836,9 @@ def build_design_prompt(
     user = (
         "Design the routine. Hard rules:\n"
         "- Choose exercise ids ONLY from the provided catalog (never invent ids).\n"
-        "- Cover every required pattern (up to the exercise count). Prefer different movement patterns;\n"
-        "  if the count exceeds the patterns the muscle group has, repeat a pattern with a DIFFERENT\n"
-        "  exercise (never the same exercise id twice).\n"
+        "- Cover every required pattern (up to the exercise count). NEVER repeat a movement_pattern;\n"
+        "  if the muscle group has fewer patterns than the count, return fewer exercises.\n"
+        "- Respect impact_cap from the symptom context (never program above it).\n"
         "- Order compounds before isolation; pick 2 warm-up/activation ids from warmup_catalog.\n"
         "- Exclude contraindicated patterns; respect phase safety (no high impact in ovulatory/3rd trimester,\n"
         "  no supine from gestational week 16).\n"
@@ -858,7 +846,7 @@ def build_design_prompt(
         "  keep training the target muscle with pain-free range, controlled tempo and moderate load,\n"
         "  avoiding only what is likely to aggravate (impact). Moderate (4-6): reduce load/range and\n"
         "  skip the most aggravating patterns. Severe (>=7) or red flags: do not load; choose gentle\n"
-        "  alternatives. Explain the adaptation in summary and rationale.\n"
+        "  alternatives. Explain the adaptation in each exercise rationale.\n"
         "- Equipment filters, in order: (1) exercises covered by the gym machines;\n"
         "  (2) free exercises whose required_equipment is available in gym_equipment\n"
         "  (bench enables Bulgarian/step-ups; dumbbell/barbell/smith as registered);\n"
@@ -886,13 +874,14 @@ def enforce_prescription(
     gym_machines: list[dict[str, Any]] | None = None,
     equipment_keys: Iterable[str] | None = None,
     available_exercise_ids: Iterable[str] | None = None,
+    impact_cap: str | None = None,
 ) -> dict[str, Any]:
     """Repair/validate the model's routine so all invariants always hold."""
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
     session = request.session_id or f"day:{datetime.date.today().isoformat()}"
     rng = random.Random(_seed(session, ",".join(groups), request.exercises_count, request.language))
-    max_impact = _max_impact(core_result)
+    max_impact = _combined_impact(core_result, impact_cap)
     block_supine = _blocks_supine(request, core_result)
     blocked = {_value(p) for p in contraindicated_patterns}
     equipment = {_value(k) for k in equipment_keys} if equipment_keys is not None else None
@@ -910,16 +899,39 @@ def enforce_prescription(
     entries: list[dict[str, Any]] = []
     seen: set[str] = set()          # patterns already covered
     seen_ids: set[str] = set()      # exercises already used
+
+    def substitute(pattern: str) -> Exercise | None:
+        """Valid exercise of the same pattern when the model's id is invalid."""
+        candidates = [
+            e
+            for e in catalog
+            if patterns_of(e) == pattern
+            and e.id not in seen_ids
+            and _safe(e, max_impact, blocked, block_supine=block_supine)
+        ]
+        candidates.sort(
+            key=lambda e: (
+                _rank(e.impact),
+                _availability_rank(e, equipment, allowed),
+                e.id,
+            )
+        )
+        return candidates[0] if candidates else None
+
     for item in model_payload.get("routine") or []:
         if not isinstance(item, dict):
             continue
         exercise = resolve(item.get("exercise_id")) or resolve(item.get("exercise_original"))
+        if exercise is None:
+            exercise = substitute(str(item.get("movement_pattern") or ""))
         if exercise is None or not _safe(exercise, max_impact, blocked, block_supine=block_supine):
             continue
         if exercise.id in seen_ids:
             continue
-        seen_ids.add(exercise.id)
         pattern = patterns_of(exercise)
+        if pattern and pattern in seen:
+            continue
+        seen_ids.add(exercise.id)
         if pattern:
             seen.add(pattern)
         entries.append(
@@ -979,9 +991,11 @@ def enforce_prescription(
                 break
             if str(candidate.get("exercise_id")) in used_ids:
                 continue
+            pattern = candidate.get("movement_pattern")
+            if pattern and pattern in seen:
+                continue
             entries.append(candidate)
             used_ids.add(str(candidate.get("exercise_id")))
-            pattern = candidate.get("movement_pattern")
             if pattern:
                 seen.add(pattern)
 
@@ -1013,9 +1027,6 @@ def enforce_prescription(
             warmup = chosen
     total = sum(e["estimated_seconds"] for e in warmup + entries)
     alerts: list[str] = []
-    summary = model_payload.get("summary")
-    if isinstance(summary, str) and summary:
-        alerts.append(summary)
     if blocked:
         alerts.append("Contraindicated patterns excluded: " + ", ".join(sorted(blocked)))
 
@@ -1254,6 +1265,7 @@ class RoutinePlanner:
         available_exercise_ids: Iterable[str] | None = None,
         symptom_notes: str | None = None,
         symptom_context: dict[str, Any] | None = None,
+        impact_cap: str | None = None,
     ) -> RoutineResponse:
         contraindicated = tuple(sorted(_value(p) for p in contraindicated_patterns))
         preferred = tuple(sorted(str(p) for p in preferred_exercise_ids))
@@ -1270,6 +1282,7 @@ class RoutinePlanner:
             preferred_exercise_ids=preferred,
             equipment_keys=equipment_keys,
             available_exercise_ids=available_exercise_ids,
+            impact_cap=impact_cap,
         )
 
         self._last_engine = "deterministic"
@@ -1284,6 +1297,7 @@ class RoutinePlanner:
                 equipment_keys,
                 symptom_notes,
                 symptom_context,
+                impact_cap,
             )
             raw = self._client.complete(system, user, session_id=request.session_id)
             if isinstance(raw, dict) and raw.get("routine"):
@@ -1297,6 +1311,7 @@ class RoutinePlanner:
                     gym_machines=gym_machines,
                     equipment_keys=equipment_keys,
                     available_exercise_ids=available_exercise_ids,
+                    impact_cap=impact_cap,
                 )
                 self._last_engine = (
                     "gpt-6-luna"

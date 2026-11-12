@@ -11,7 +11,9 @@ def test_single_group_routine_only_targets_that_group():
     request = RoutineRequest(muscle_groups=["QUADRICEPS"], language="ES", exercises_count=5)
     payload = build_prescription(request)
 
-    assert len(payload["routine"]) == 5
+    assert payload["routine"], "the group must keep at least one exercise"
+    patterns = [entry.get("movement_pattern") for entry in payload["routine"]]
+    assert len(patterns) == len(set(patterns)), patterns
     for entry in payload["routine"]:
         groups = groups_of(entry)
         assert "QUADRICEPS" in groups, (entry["exercise_original"], groups)
@@ -35,7 +37,8 @@ def test_repair_drops_exercises_outside_the_requested_group():
     ids = [entry.get("exercise_id") for entry in fixed["routine"]]
     assert "lat-pulldown" not in ids
     assert "hip-thrust" not in ids
-    assert len(ids) == len(set(ids)) == 5
+    assert len(ids) == len(set(ids))
+    assert len(ids) >= 1
     for entry in fixed["routine"]:
         assert "QUADRICEPS" in groups_of(entry), entry["exercise_original"]
 
