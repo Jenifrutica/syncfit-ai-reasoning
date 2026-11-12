@@ -56,7 +56,8 @@ def test_planner_excludes_high_impact_and_never_injects_them():
     result = planner.plan(request(["QUADRICEPS"]), core)
     assert result.routine, "routine must not be empty"
     assert all(entry.impact == "LOW" for entry in result.routine)
-    assert all(entry.exercise_id in {"goblet-squat", "step-ups", "leg-extension"} for entry in result.routine)
+    low_impact_quads = {"goblet-squat", "step-ups", "leg-extension", "smith-squat", "leg-press"}
+    assert all(entry.exercise_id in low_impact_quads for entry in result.routine)
     assert all(entry.movement_pattern for entry in result.routine)
 
 

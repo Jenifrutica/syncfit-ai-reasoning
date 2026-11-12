@@ -8,7 +8,10 @@ entries, a deterministic catalog fallback completes the routine.
 
 from __future__ import annotations
 
+import datetime
+import hashlib
 import json
+import random
 import re
 from typing import Any, Iterable
 
@@ -44,6 +47,12 @@ DEFAULT_EFFECTIVE_SETS = 3
 DEFAULT_APPROXIMATION_SETS = 2
 DEFAULT_REPS = 10
 SECONDS_PER_REP = 3
+
+
+def _seed(*parts: object) -> int:
+    """Stable per-session seed so the same request varies across routines."""
+    raw = "|".join(str(part) for part in parts if part is not None)
+    return int(hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12], 16)
 
 
 def _focus_catalog(groups: Iterable[str]) -> list[Exercise]:
@@ -255,26 +264,24 @@ def _resolve(item: dict[str, Any], by_id: dict[str, Exercise], by_name: dict[str
     return by_name.get(name)
 
 
-def _select_warmup(groups: list[str], limit: int = 2) -> list[Exercise]:
-    selected: list[Exercise] = []
+def _select_warmup(groups: list[str], limit: int = 2, seed: int | None = None) -> list[Exercise]:
+    """Valid warm-ups for the groups, rotated per session (never always the same)."""
+    pool: list[Exercise] = []
     seen: set[str] = set()
     for group in groups:
         for exercise in exercises_for_groups([group]):
             role = _value(getattr(exercise, "role", "MAIN"))
             if role in ("WARMUP", "ACTIVATION") and exercise.id not in seen:
                 seen.add(exercise.id)
-                selected.append(exercise)
-                if len(selected) >= limit:
-                    return selected
-    if len(selected) < limit:
-        for exercise in load_exercises():
-            role = _value(getattr(exercise, "role", "MAIN"))
-            if role in ("WARMUP", "ACTIVATION") and exercise.id not in seen:
-                seen.add(exercise.id)
-                selected.append(exercise)
-                if len(selected) >= limit:
-                    break
-    return selected
+                pool.append(exercise)
+    for exercise in load_exercises():
+        role = _value(getattr(exercise, "role", "MAIN"))
+        if role in ("WARMUP", "ACTIVATION") and exercise.id not in seen:
+            seen.add(exercise.id)
+            pool.append(exercise)
+    if seed is not None:
+        random.Random(seed).shuffle(pool)
+    return pool[:limit]
 
 
 def _trim_to_budget(routine: list[dict[str, Any]], budget_seconds: int) -> list[dict[str, Any]]:
@@ -302,6 +309,8 @@ def enrich_routine(
     """Correct and complete the model output using the catalog and the rules."""
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
+    session = request.session_id or f"day:{datetime.date.today().isoformat()}"
+    rng = random.Random(_seed(session, ",".join(groups), request.exercises_count, request.language))
     max_impact = _max_impact(core_result)
     block_supine = _blocks_supine(request, core_result)
     by_id = {exercise.id: exercise for exercise in catalog}
@@ -358,7 +367,7 @@ def enrich_routine(
     if request.include_warmup:
         warmup = [
             _entry_from_exercise(e, language, max_impact, groups, block_supine=block_supine)
-            for e in _select_warmup(groups, 2)
+            for e in _select_warmup(groups, 2, seed=_seed(session, "warmup", ",".join(groups)))
         ]
 
     if request.time_budget_minutes:
@@ -550,6 +559,8 @@ def build_prescription(
     """
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
+    session = request.session_id or f"day:{datetime.date.today().isoformat()}"
+    rng = random.Random(_seed(session, ",".join(groups), request.exercises_count, request.language))
     max_impact = _max_impact(core_result)
     block_supine = _blocks_supine(request, core_result)
     blocked = {_value(p) for p in contraindicated_patterns}
@@ -593,11 +604,11 @@ def build_prescription(
             ]
             if not candidates:
                 continue
+            rng.shuffle(candidates)
             candidates.sort(
                 key=lambda e: (
                     0 if e.id in preferred else 1,
                     _availability_rank(e, equipment, allowed),
-                    e.id,
                 )
             )
             add(candidates[0])
@@ -624,6 +635,7 @@ def build_prescription(
                 ]
                 if not fill:
                     break
+                rng.shuffle(fill)
 
                 def fill_key(exercise: Exercise) -> tuple:
                     pattern = patterns_of(exercise)
@@ -632,7 +644,6 @@ def build_prescription(
                         0 if getattr(exercise, "compound", False) else 1,
                         0 if exercise.id in preferred else 1,
                         _availability_rank(exercise, equipment, allowed),
-                        exercise.id,
                     )
 
                 fill.sort(key=fill_key)
@@ -665,7 +676,7 @@ def build_prescription(
     if request.include_warmup:
         warmup = [
             _entry_from_exercise(e, language, max_impact, groups, block_supine=block_supine)
-            for e in _select_warmup(groups, 2)
+            for e in _select_warmup(groups, 2, seed=_seed(session, "warmup", ",".join(groups)))
         ]
 
     if request.time_budget_minutes:
@@ -868,6 +879,8 @@ def enforce_prescription(
     """Repair/validate the model's routine so all invariants always hold."""
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
+    session = request.session_id or f"day:{datetime.date.today().isoformat()}"
+    rng = random.Random(_seed(session, ",".join(groups), request.exercises_count, request.language))
     max_impact = _max_impact(core_result)
     block_supine = _blocks_supine(request, core_result)
     blocked = {_value(p) for p in contraindicated_patterns}
@@ -1076,6 +1089,7 @@ class RoutinePlanner:
     ) -> str:
         return json.dumps(
             {
+                "session": request.session_id,
                 "groups": [str(g) for g in request.muscle_groups],
                 "language": _value(request.language),
                 "per_group": request.exercises_per_group,
