@@ -55,6 +55,19 @@ def _seed(*parts: object) -> int:
     return int(hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12], 16)
 
 
+def _family(exercise: Exercise) -> str:
+    """Exercise family for sequencing: squat, leg press, lunge, extension...
+
+    Leg press shares the `squat` movement pattern in the catalog but is a
+    different exercise and may coexist with one squat. Two squats (barbell,
+    Smith, goblet) are the same family and only one is programmed.
+    """
+    name = exercise.name.en.lower()
+    if "leg press" in name:
+        return "leg_press"
+    return str(getattr(exercise, "variant_of", None) or patterns_of(exercise) or exercise.id)
+
+
 def _focus_catalog(groups: Iterable[str]) -> list[Exercise]:
     """Exercises that actually target the requested groups.
 
@@ -586,10 +599,12 @@ def build_prescription(
     selected: list[Exercise] = []
     used_ids: set[str] = set()
     used_patterns: set[str] = set()
+    used_families: set[str] = set()
 
     def add(exercise: Exercise) -> None:
         selected.append(exercise)
         used_ids.add(exercise.id)
+        used_families.add(_family(exercise))
         pattern = patterns_of(exercise)
         if pattern:
             used_patterns.add(pattern)
@@ -608,7 +623,9 @@ def build_prescription(
             candidates = [
                 e
                 for e in exercises_for_pattern(pattern, [group])
-                if e.id in focused_ids and _safe(e, max_impact, blocked, block_supine=block_supine)
+                if e.id in focused_ids
+                and _family(e) not in used_families
+                and _safe(e, max_impact, blocked, block_supine=block_supine)
             ]
             if not candidates:
                 continue
@@ -624,16 +641,15 @@ def build_prescription(
             if count >= per_group:
                 break
         if count < per_group:
-            # One exercise per movement pattern: never two squats or two
-            # lunges in the same routine. If the group has fewer patterns than
-            # the requested count, the routine simply has fewer exercises.
+            # One exercise per FAMILY: a squat and a leg press may coexist, but
+            # two squats (barbell, Smith, goblet) may not. If the group has
+            # fewer families than the requested count, the routine is shorter.
             for exercise in _focus_catalog([group]):
                 if exercise.id not in focused_ids:
                     continue
-                if exercise.id in used_ids or not _safe(exercise, max_impact, blocked, equipment, allowed, block_supine=block_supine):
+                if exercise.id in used_ids or _family(exercise) in used_families:
                     continue
-                pattern = patterns_of(exercise)
-                if pattern and pattern in used_patterns:
+                if not _safe(exercise, max_impact, blocked, equipment, allowed, block_supine=block_supine):
                     continue
                 add(exercise)
                 count += 1
@@ -798,6 +814,7 @@ def build_design_prompt(
             "name": e.name.en,
             "muscle_groups": [str(g) for g in e.muscle_groups],
             "movement_pattern": patterns_of(e),
+            "family": _family(e),
             "compound": bool(getattr(e, "compound", False)),
             "impact": str(e.impact),
             "equipment_type": str(e.equipment_type) if e.equipment_type else None,
@@ -836,8 +853,10 @@ def build_design_prompt(
     user = (
         "Design the routine. Hard rules:\n"
         "- Choose exercise ids ONLY from the provided catalog (never invent ids).\n"
-        "- Cover every required pattern (up to the exercise count). NEVER repeat a movement_pattern;\n"
-        "  if the muscle group has fewer patterns than the count, return fewer exercises.\n"
+        "- Cover every required pattern (up to the exercise count). NEVER repeat an exercise family\n"
+        "  (the family field). A squat and a leg press are different families and may both appear;\n"
+        "  two squats (barbell, Smith, goblet) are the same family: only one. If the group has fewer\n"
+        "  families than the count, return fewer exercises.\n"
         "- Respect impact_cap from the symptom context (never program above it).\n"
         "- Order compounds before isolation; pick 2 warm-up/activation ids from warmup_catalog.\n"
         "- Exclude contraindicated patterns; respect phase safety (no high impact in ovulatory/3rd trimester,\n"
@@ -899,6 +918,7 @@ def enforce_prescription(
     entries: list[dict[str, Any]] = []
     seen: set[str] = set()          # patterns already covered
     seen_ids: set[str] = set()      # exercises already used
+    seen_families: set[str] = set() # exercise families already used
 
     def substitute(pattern: str) -> Exercise | None:
         """Valid exercise of the same pattern when the model's id is invalid."""
@@ -907,6 +927,7 @@ def enforce_prescription(
             for e in catalog
             if patterns_of(e) == pattern
             and e.id not in seen_ids
+            and _family(e) not in seen_families
             and _safe(e, max_impact, blocked, block_supine=block_supine)
         ]
         candidates.sort(
@@ -928,10 +949,11 @@ def enforce_prescription(
             continue
         if exercise.id in seen_ids:
             continue
-        pattern = patterns_of(exercise)
-        if pattern and pattern in seen:
+        if _family(exercise) in seen_families:
             continue
         seen_ids.add(exercise.id)
+        seen_families.add(_family(exercise))
+        pattern = patterns_of(exercise)
         if pattern:
             seen.add(pattern)
         entries.append(
@@ -963,11 +985,12 @@ def enforce_prescription(
                                              current["rest_seconds"], rebuilt["weight_suggested_kg"])
                 rebuilt["estimated_seconds"] = sum(s["estimated_seconds"] for s in rebuilt["sets"])
                 entries[index] = rebuilt
-        elif len(entries) < target:
+        elif len(entries) < target and _family(exercise) not in seen_families:
             entry = _entry_from_exercise(
                 exercise, language, max_impact, groups, block_supine=block_supine
             )
             entries.append(entry)
+            seen_families.add(_family(exercise))
             seen.add(pattern)
 
     # Coverage: complete missing required patterns from the deterministic skeleton.
@@ -980,7 +1003,11 @@ def enforce_prescription(
         fallback = skeleton_by_pattern.get(pattern)
         if fallback:
             entries.append(fallback)
-            seen.add(pattern)
+            if fallback.get("movement_pattern"):
+                seen.add(str(fallback["movement_pattern"]))
+            exercise = by_id.get(_normalize_id(str(fallback.get("exercise_id"))))
+            if exercise is not None:
+                seen_families.add(_family(exercise))
 
     # Complete the count with the group-focused skeleton (e.g. when the model
     # proposed exercises outside the requested groups and they were rejected).
@@ -991,11 +1018,14 @@ def enforce_prescription(
                 break
             if str(candidate.get("exercise_id")) in used_ids:
                 continue
-            pattern = candidate.get("movement_pattern")
-            if pattern and pattern in seen:
+            exercise = by_id.get(_normalize_id(str(candidate.get("exercise_id"))))
+            if exercise is not None and _family(exercise) in seen_families:
                 continue
             entries.append(candidate)
             used_ids.add(str(candidate.get("exercise_id")))
+            if exercise is not None:
+                seen_families.add(_family(exercise))
+            pattern = candidate.get("movement_pattern")
             if pattern:
                 seen.add(pattern)
 
