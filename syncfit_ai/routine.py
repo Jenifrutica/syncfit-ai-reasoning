@@ -1024,7 +1024,19 @@ def enforce_prescription(
             if len(chosen) >= 2:
                 break
         if chosen:
-            warmup = chosen
+            # Keep the model's first pick and rotate the second one with the
+            # session-seeded warm-up pool, so the block is not always identical
+            # even when the model repeats itself.
+            merged = list(chosen[:1])
+            used = {entry.get("exercise_id") for entry in merged}
+            for candidate in warmup:
+                if len(merged) >= 2:
+                    break
+                if candidate.get("exercise_id") in used:
+                    continue
+                merged.append(candidate)
+                used.add(candidate.get("exercise_id"))
+            warmup = merged if len(merged) >= 2 else chosen
     total = sum(e["estimated_seconds"] for e in warmup + entries)
     alerts: list[str] = []
     if blocked:
