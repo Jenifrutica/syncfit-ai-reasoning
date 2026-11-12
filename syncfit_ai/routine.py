@@ -46,6 +46,23 @@ DEFAULT_REPS = 10
 SECONDS_PER_REP = 3
 
 
+def _focus_catalog(groups: Iterable[str]) -> list[Exercise]:
+    """Exercises that actually target the requested groups.
+
+    A single-muscle request leaves full-body lifts out: they involve the target
+    but are not a focused exercise for it (a thruster is not a quad exercise).
+    """
+    values = [_value(g) for g in groups]
+    catalog = list(exercises_for_groups(values))
+    if len(values) == 1 and values[0] != "FULL_BODY":
+        catalog = [
+            exercise
+            for exercise in catalog
+            if "FULL_BODY" not in {_value(group) for group in exercise.muscle_groups}
+        ]
+    return catalog
+
+
 def _rest_for(impact: object) -> int:
     return _REST_BY_IMPACT.get(_value(impact), 90)
 
@@ -545,6 +562,7 @@ def build_prescription(
     }
     target = request.exercises_count or DEFAULT_EXERCISES_COUNT
     per_group = request.exercises_per_group or max(1, -(-target // len(groups)))
+    focused_ids = {exercise.id for exercise in _focus_catalog(groups)}
 
     selected: list[Exercise] = []
     used_ids: set[str] = set()
@@ -569,7 +587,9 @@ def build_prescription(
         )
         for pattern in group_patterns:
             candidates = [
-                e for e in exercises_for_pattern(pattern, [group]) if _safe(e, max_impact, blocked, block_supine=block_supine)
+                e
+                for e in exercises_for_pattern(pattern, [group])
+                if e.id in focused_ids and _safe(e, max_impact, blocked, block_supine=block_supine)
             ]
             if not candidates:
                 continue
@@ -585,16 +605,43 @@ def build_prescription(
             if count >= per_group:
                 break
         if count < per_group:
-            for exercise in exercises_for_groups([group]):
-                if exercise.id in used_ids or not _safe(exercise, max_impact, blocked, equipment, allowed, block_supine=block_supine):
-                    continue
+            # A focused routine may need more exercises than the group has
+            # movement patterns: repeat a pattern with a different exercise
+            # (e.g. back squat + leg press), always picking the least-used
+            # pattern so the routine stays varied.
+            pattern_uses: dict[str, int] = {}
+            for exercise in selected:
                 pattern = patterns_of(exercise)
-                if pattern and pattern in used_patterns:
-                    continue
-                add(exercise)
-                count += 1
-                if count >= per_group:
+                if pattern:
+                    pattern_uses[pattern] = pattern_uses.get(pattern, 0) + 1
+            while count < per_group:
+                fill = [
+                    exercise
+                    for exercise in _focus_catalog([group])
+                    if exercise.id in focused_ids
+                    and exercise.id not in used_ids
+                    and _safe(exercise, max_impact, blocked, equipment, allowed, block_supine=block_supine)
+                ]
+                if not fill:
                     break
+
+                def fill_key(exercise: Exercise) -> tuple:
+                    pattern = patterns_of(exercise)
+                    return (
+                        pattern_uses.get(pattern, 0),
+                        0 if getattr(exercise, "compound", False) else 1,
+                        0 if exercise.id in preferred else 1,
+                        _availability_rank(exercise, equipment, allowed),
+                        exercise.id,
+                    )
+
+                fill.sort(key=fill_key)
+                chosen = fill[0]
+                add(chosen)
+                pattern = patterns_of(chosen)
+                if pattern:
+                    pattern_uses[pattern] = pattern_uses.get(pattern, 0) + 1
+                count += 1
         if len(selected) >= target:
             break
 
@@ -737,7 +784,7 @@ def build_design_prompt(
     """The configured generative model designs a routine from state and evidence."""
     language = _value(request.language)
     groups = [_value(g) for g in request.muscle_groups]
-    catalog = exercises_for_groups(groups)
+    catalog = _focus_catalog(groups)
     scheme = _scheme(request.objective)
     wanted_patterns = [p for p in required_patterns(groups) if p not in contraindicated]
 
@@ -782,7 +829,9 @@ def build_design_prompt(
     user = (
         "Design the routine. Hard rules:\n"
         "- Choose exercise ids ONLY from the provided catalog (never invent ids).\n"
-        "- Cover every required pattern (up to the exercise count). NEVER repeat a movement_pattern.\n"
+        "- Cover every required pattern (up to the exercise count). Prefer different movement patterns;\n"
+        "  if the count exceeds the patterns the muscle group has, repeat a pattern with a DIFFERENT\n"
+        "  exercise (never the same exercise id twice).\n"
         "- Order compounds before isolation; activation/warm-up first.\n"
         "- Exclude contraindicated patterns; respect phase safety (no high impact in ovulatory/3rd trimester,\n"
         "  no supine from gestational week 16).\n"
@@ -825,25 +874,28 @@ def enforce_prescription(
     equipment = {_value(k) for k in equipment_keys} if equipment_keys is not None else None
     allowed = {str(x) for x in available_exercise_ids or []}
     target = request.exercises_count or DEFAULT_EXERCISES_COUNT
-    catalog_all = load_exercises()
-    global_by_id, global_by_name = _catalog_index(catalog_all)
-    by_id, by_name = _catalog_index(exercises_for_groups(groups))
+    # Only exercises that target the requested groups are valid. The model
+    # cannot smuggle in a back or glute exercise from the rest of the catalog.
+    catalog = _focus_catalog(groups)
+    by_id, by_name = _catalog_index(catalog)
 
     def resolve(raw: object) -> Exercise | None:
         key = _normalize_id(raw)
-        return by_id.get(key) or by_name.get(key) or global_by_id.get(key) or global_by_name.get(key)
+        return by_id.get(key) or by_name.get(key)
 
     entries: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[str] = set()          # patterns already covered
+    seen_ids: set[str] = set()      # exercises already used
     for item in model_payload.get("routine") or []:
         if not isinstance(item, dict):
             continue
         exercise = resolve(item.get("exercise_id")) or resolve(item.get("exercise_original"))
         if exercise is None or not _safe(exercise, max_impact, blocked, block_supine=block_supine):
             continue
-        pattern = patterns_of(exercise)
-        if pattern and pattern in seen:
+        if exercise.id in seen_ids:
             continue
+        seen_ids.add(exercise.id)
+        pattern = patterns_of(exercise)
         if pattern:
             seen.add(pattern)
         entries.append(
@@ -858,7 +910,7 @@ def enforce_prescription(
         if machine.get("pattern") and machine.get("exercise_id"):
             machine_pattern.setdefault(str(machine["pattern"]), str(machine["exercise_id"]))
     for pattern, exercise_id in machine_pattern.items():
-        exercise = global_by_id.get(_normalize_id(exercise_id))
+        exercise = by_id.get(_normalize_id(exercise_id))
         if exercise is None or not _safe(exercise, max_impact, blocked, block_supine=block_supine):
             continue
         index = next((i for i, e in enumerate(entries) if e.get("movement_pattern") == pattern), None)
@@ -893,6 +945,21 @@ def enforce_prescription(
         if fallback:
             entries.append(fallback)
             seen.add(pattern)
+
+    # Complete the count with the group-focused skeleton (e.g. when the model
+    # proposed exercises outside the requested groups and they were rejected).
+    if len(entries) < target:
+        used_ids = {str(entry.get("exercise_id")) for entry in entries}
+        for candidate in skeleton.get("routine") or []:
+            if len(entries) >= target:
+                break
+            if str(candidate.get("exercise_id")) in used_ids:
+                continue
+            entries.append(candidate)
+            used_ids.add(str(candidate.get("exercise_id")))
+            pattern = candidate.get("movement_pattern")
+            if pattern:
+                seen.add(pattern)
 
     entries = entries[:target]
     entries = order_routine(entries, core_result.phase_inferred.value if core_result else None, language)
