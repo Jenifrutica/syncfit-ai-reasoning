@@ -66,7 +66,9 @@ def test_planner_excludes_supine_in_gestational_week_16():
     planner = RoutinePlanner(FakeClient(response=model_output("flat-bench-press")))
     result = planner.plan(request(["CHEST"]), core)
     assert result.routine, "chest must still be trained safely"
-    assert all("bench press" not in (entry.exercise_original or "").lower() for entry in result.routine)
+    # Incline work is fine; the flat (supine) press is the one to exclude.
+    assert all(entry.exercise_id != "flat-bench-press" for entry in result.routine)
+    assert all(not entry.supine for entry in result.routine)
     assert all(not entry.blocked for entry in result.routine)
 
 
