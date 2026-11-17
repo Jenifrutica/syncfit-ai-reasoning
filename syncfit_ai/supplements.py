@@ -15,6 +15,8 @@ from syncfit_contracts import (
     supplements_for,
 )
 
+from .options import objective_label
+
 _OBJECTIVE_LABEL = {
     "STRENGTH": {"en": "strength", "es": "fuerza", "zh": "力量"},
     "HYPERTROPHY": {"en": "muscle gain", "es": "ganancia muscular", "zh": "增肌"},
@@ -54,10 +56,10 @@ def _value(item: object) -> str:
 
 def _reason(safety: str, objective: str | None, language: str) -> dict[str, str]:
     base = dict(_REASON.get(safety, _REASON["SAFE"]))
-    if objective and objective in _OBJECTIVE_LABEL:
-        label = _OBJECTIVE_LABEL[objective]
+    label = (objective_label(objective) or _OBJECTIVE_LABEL.get(objective)) if objective else None
+    if label:
         code = language.lower()
-        suffix = label.get(code, label["en"])
+        suffix = label.get(code) or label.get("en", "")
         for key in base:
             base[key] = f"{base[key]} ({suffix})" if key == code or key == "en" else base[key]
     return base

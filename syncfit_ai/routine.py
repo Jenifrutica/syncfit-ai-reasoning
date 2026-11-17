@@ -35,6 +35,7 @@ from syncfit_core.enums import InferredPhase
 
 from .client import ReasoningClient
 from .loads import apply_baseline_loads
+from .options import objective_scheme
 from .ordering import order_routine
 from .prompts import build_routine_system_prompt, build_routine_user_prompt
 from .structures import LRUCache
@@ -504,7 +505,10 @@ _PATTERN_REASON: dict[str, dict[str, str]] = {
 
 def _scheme(objective: object) -> dict[str, int]:
     key = _value(objective) if objective is not None else "HYPERTROPHY"
-    return _GOAL_SCHEME.get(key, _GOAL_SCHEME["HYPERTROPHY"])
+    base = dict(_GOAL_SCHEME.get(key, _GOAL_SCHEME["HYPERTROPHY"]))
+    # Values stored on the objective option in the database win.
+    base.update(objective_scheme(key))
+    return base
 
 
 def _pattern_reason(pattern: str | None, language: str) -> str:
