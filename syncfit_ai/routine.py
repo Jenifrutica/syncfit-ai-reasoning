@@ -229,6 +229,7 @@ def _entry_from_exercise(
     weight: float = 0.0,
     rationale: str = "",
     block_supine: bool = False,
+    objective: object = None,
 ) -> dict[str, Any]:
     localized = _localized(exercise, language)
     blocked = _rank(exercise.impact) > _rank(max_impact)
@@ -244,14 +245,27 @@ def _entry_from_exercise(
         if replacement is not None:
             substitute = localize(replacement.name, language)
     role = _value(getattr(exercise, "role", "MAIN"))
-    sets = _build_sets(role, float(weight), exercise.impact)
+    compound = bool(getattr(exercise, "compound", False))
+    rest_seconds = _rest_for(exercise.impact)
+    series_adapted = min(max(int(series), 0), 3)
+    reps_adapted = max(int(reps), 10)
+    if objective is not None:
+        # The objective's scheme (stored on its database option) sets the dose.
+        scheme = _scheme(objective)
+        sets = _build_sets_goal(role, float(weight), exercise.impact, compound, objective)
+        if role not in ("WARMUP", "ACTIVATION"):
+            series_adapted = scheme["sets"]
+            reps_adapted = scheme["reps"]
+            rest_seconds = scheme["rest_compound"] if compound else scheme["rest_iso"]
+    else:
+        sets = _build_sets(role, float(weight), exercise.impact)
     return {
         "exercise_original": localized["name"],
         "blocked": blocked,
         "block_reason": block_reason,
         "exercise_substitute": substitute,
-        "series_adapted": min(max(int(series), 0), 3),
-        "reps_adapted": max(int(reps), 10),
+        "series_adapted": series_adapted,
+        "reps_adapted": reps_adapted,
         "weight_suggested_kg": round(float(weight), 1),
         "exercise_id": exercise.id,
         "muscle_groups": list(exercise.muscle_groups),
@@ -269,7 +283,7 @@ def _entry_from_exercise(
         "image_url": exercise.image_url,
         "media_url": exercise.media_url,
         "role": _value(getattr(exercise, "role", "MAIN")),
-        "rest_seconds": _rest_for(exercise.impact),
+        "rest_seconds": rest_seconds,
         "estimated_seconds": sum(s["estimated_seconds"] for s in sets),
         "sets": sets,
         "movement_pattern": patterns_of(exercise),
@@ -674,6 +688,7 @@ def build_prescription(
             reps=_scheme(request.objective)["reps"],
             rationale=_pattern_reason(patterns_of(exercise), language),
             block_supine=block_supine,
+            objective=request.objective or "HYPERTROPHY",
         )
         for exercise in selected
     ]
