@@ -566,6 +566,9 @@ def _safe(
         return False
     if patterns_of(exercise) in blocked_patterns:
         return False
+    # The gym inventory is a hard limit: never prescribe equipment the gym lacks.
+    if _availability_rank(exercise, equipment, allowed_ids):
+        return False
     return True
 
 
@@ -644,7 +647,7 @@ def build_prescription(
                 for e in exercises_for_pattern(pattern, [group])
                 if e.id in focused_ids
                 and _family(e) not in used_families
-                and _safe(e, max_impact, blocked, block_supine=block_supine)
+                and _safe(e, max_impact, blocked, equipment, allowed, block_supine=block_supine)
             ]
             if not candidates:
                 continue
@@ -954,7 +957,7 @@ def enforce_prescription(
             if patterns_of(e) == pattern
             and e.id not in seen_ids
             and _family(e) not in seen_families
-            and _safe(e, max_impact, blocked, block_supine=block_supine)
+            and _safe(e, max_impact, blocked, equipment, allowed, block_supine=block_supine)
         ]
         candidates.sort(
             key=lambda e: (
@@ -971,7 +974,7 @@ def enforce_prescription(
         exercise = resolve(item.get("exercise_id")) or resolve(item.get("exercise_original"))
         if exercise is None:
             exercise = substitute(str(item.get("movement_pattern") or ""))
-        if exercise is None or not _safe(exercise, max_impact, blocked, block_supine=block_supine):
+        if exercise is None or not _safe(exercise, max_impact, blocked, equipment, allowed, block_supine=block_supine):
             continue
         if exercise.id in seen_ids:
             continue
