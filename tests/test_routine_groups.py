@@ -77,3 +77,20 @@ def test_squat_and_leg_press_coexist_but_not_two_squats():
     assert len([exercise_id for exercise_id in ids if exercise_id in squats]) == 1, ids
     assert "leg-press" in ids, ids
     assert "leg-extension" in ids, ids
+
+
+def test_full_body_mixes_exercises_from_different_regions():
+    from syncfit_ai.routine import expand_groups
+
+    assert expand_groups(["FULL_BODY"])[:4] == ["QUADRICEPS", "CHEST", "HAMSTRINGS", "BACK"]
+    assert expand_groups(["GLUTES", "FULL_BODY"])[0] == "GLUTES"
+    payload = build_prescription(RoutineRequest(muscle_groups=["FULL_BODY"], language="ES", exercises_count=6))
+    regions = set()
+    for entry in payload["routine"]:
+        groups = set(groups_of(entry))
+        assert "FULL_BODY" not in groups, entry["exercise_original"]
+        regions |= groups
+    lower = regions & {"QUADRICEPS", "HAMSTRINGS", "GLUTES", "CALVES"}
+    upper = regions & {"CHEST", "BACK", "LATS", "UPPER_BACK", "SHOULDERS", "ARMS", "BICEPS", "TRICEPS"}
+    assert lower and upper, regions
+    assert len(payload["routine"]) == 6, [e["exercise_original"] for e in payload["routine"]]

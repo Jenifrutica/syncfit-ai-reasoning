@@ -70,15 +70,33 @@ def _family(exercise: Exercise) -> str:
     return str(getattr(exercise, "variant_of", None) or patterns_of(exercise) or exercise.id)
 
 
+#: "Full body" is a session that trains every region with different exercises
+#: (legs, chest, back, shoulders, glutes, core...), alternating lower/upper.
+FULL_BODY_GROUPS = (
+    "QUADRICEPS", "CHEST", "HAMSTRINGS", "BACK", "SHOULDERS", "GLUTES", "CORE", "ARMS", "CALVES",
+)
+
+
+def expand_groups(groups: Iterable[str]) -> list[str]:
+    """Replace FULL_BODY by the regions it covers, keeping the other picks."""
+    out: list[str] = []
+    for group in (_value(g) for g in groups):
+        for value in (FULL_BODY_GROUPS if group == "FULL_BODY" else (group,)):
+            if value not in out:
+                out.append(value)
+    return out
+
+
 def _focus_catalog(groups: Iterable[str]) -> list[Exercise]:
     """Exercises that actually target the requested groups.
 
-    A single-muscle request leaves full-body lifts out: they involve the target
-    but are not a focused exercise for it (a thruster is not a quad exercise).
+    Full-body compound drills (thrusters, burpees) are left out: a full-body
+    session is built from different exercises for each region, and a
+    single-muscle request wants focused work (a thruster is not a quad exercise).
     """
-    values = [_value(g) for g in groups]
+    values = expand_groups(groups)
     catalog = list(exercises_for_groups(values))
-    if len(values) == 1 and values[0] != "FULL_BODY":
+    if values:
         catalog = [
             exercise
             for exercise in catalog
@@ -345,7 +363,7 @@ def enrich_routine(
 ) -> dict[str, Any]:
     """Correct and complete the model output using the catalog and the rules."""
     language = _value(request.language)
-    groups = [_value(g) for g in request.muscle_groups]
+    groups = expand_groups(request.muscle_groups)
     session = request.session_id or f"day:{datetime.date.today().isoformat()}"
     max_impact = _max_impact(core_result)
     block_supine = _blocks_supine(request, core_result)
@@ -598,7 +616,7 @@ def build_prescription(
     patterns excluded. The reasoning model may later choose among valid variants.
     """
     language = _value(request.language)
-    groups = [_value(g) for g in request.muscle_groups]
+    groups = expand_groups(request.muscle_groups)
     session = request.session_id or f"day:{datetime.date.today().isoformat()}"
     rng = random.Random(_seed(session, ",".join(groups), request.exercises_count, request.language))
     max_impact = _combined_impact(core_result, impact_cap)
@@ -824,7 +842,7 @@ def build_design_prompt(
 ) -> tuple[str, str]:
     """The configured generative model designs a routine from state and evidence."""
     language = _value(request.language)
-    groups = [_value(g) for g in request.muscle_groups]
+    groups = expand_groups(request.muscle_groups)
     catalog = _focus_catalog(groups)
     scheme = _scheme(request.objective)
     wanted_patterns = [p for p in required_patterns(groups) if p not in contraindicated]
@@ -923,7 +941,7 @@ def enforce_prescription(
 ) -> dict[str, Any]:
     """Repair/validate the model's routine so all invariants always hold."""
     language = _value(request.language)
-    groups = [_value(g) for g in request.muscle_groups]
+    groups = expand_groups(request.muscle_groups)
     session = request.session_id or f"day:{datetime.date.today().isoformat()}"
     rng = random.Random(_seed(session, ",".join(groups), request.exercises_count, request.language))
     max_impact = _combined_impact(core_result, impact_cap)
