@@ -14,7 +14,7 @@ from .analyze import (
     sanitize_symptom_analysis,
 )
 from .auditor import BiomechanicalAuditor
-from .client import FakeClient, OpenCodeGoClient, OpenCodeGoError, ReasoningClient
+from .client import FakeClient, OpenCodeGoClient, OpenCodeGoError, ReasoningClient, ReasoningProviderUnavailable
 from .config import ReasoningConfig
 from .domain import AuditRequest, ProgrammedExercise
 from .loads import (
@@ -49,6 +49,7 @@ __all__ = [
     "interpret_symptom_text",
     "sanitize_symptom_analysis",
     "ReasoningClient",
+    "ReasoningProviderUnavailable",
     "OpenCodeGoClient",
     "OpenCodeGoError",
     "FakeClient",

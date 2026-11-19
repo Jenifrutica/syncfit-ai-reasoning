@@ -20,18 +20,21 @@ import uuid
 from typing import Any, Callable
 
 from ..config import ReasoningConfig
+from .base import ReasoningProviderUnavailable
 
 ClientFactory = Callable[[str], Any]
 
 
-class OpenCodeGoError(RuntimeError):
+class OpenCodeGoError(ReasoningProviderUnavailable):
     """Raised when the OpenCode call fails or returns invalid JSON."""
 
 
 def _is_response_format_error(exc: Exception) -> bool:
     """True only when the endpoint rejected the response_format parameter."""
     message = str(exc).lower()
-    return "response_format" in message or "text.format" in message
+    return getattr(exc, "status_code", None) in (400, 422) and (
+        "response_format" in message or "text.format" in message
+    )
 
 
 def _is_auth_error(exc: Exception) -> bool:
@@ -57,6 +60,15 @@ def _is_transient_error(exc: Exception) -> bool:
         "ReadTimeout",
         "WriteTimeout",
     }
+
+
+def _is_provider_error(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    return (
+        isinstance(exc, OpenCodeGoError)
+        or isinstance(status, int) and 400 <= status <= 599
+        or _is_transient_error(exc)
+    )
 
 
 class OpenCodeGoClient:
@@ -148,7 +160,9 @@ class OpenCodeGoClient:
                 self.last_product_base_url = base_url
                 self.last_model = self._config.model
                 return payload
-            except Exception as exc:  # noqa: BLE001 - re-raised below if no fallback
+            except Exception as exc:
+                if not _is_provider_error(exc):
+                    raise
                 last_error = exc
                 if _is_auth_error(exc) and index < len(candidates) - 1:
                     continue  # try the other product
@@ -164,7 +178,9 @@ class OpenCodeGoClient:
                         payload = self._complete_with_responses(
                             base_url, fallback_model, messages, extra_headers, fallback_budget
                         )
-                    except Exception as fallback_exc:  # noqa: BLE001 - planner uses deterministic fallback
+                    except Exception as fallback_exc:
+                        if not _is_provider_error(fallback_exc):
+                            raise
                         raise OpenCodeGoError(
                             f"Primary model {self._config.model} and fallback model "
                             f"{fallback_model} both failed."
@@ -172,8 +188,10 @@ class OpenCodeGoClient:
                     self.last_product_base_url = base_url
                     self.last_model = fallback_model
                     return payload
-                raise
-        raise last_error if last_error else OpenCodeGoError("No endpoint available.")
+                if isinstance(exc, OpenCodeGoError):
+                    raise
+                raise OpenCodeGoError("OpenCode request failed.") from exc
+        raise OpenCodeGoError("No endpoint available.") from last_error
 
     def _complete_on(
         self,
@@ -205,6 +223,8 @@ class OpenCodeGoClient:
                 timeout=timeout,
             )
 
+        if not response.choices:
+            raise OpenCodeGoError("OpenCode returned no choices.")
         content = response.choices[0].message.content
         return self._parse_json_object(content)
 
