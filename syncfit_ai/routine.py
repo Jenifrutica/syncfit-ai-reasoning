@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import math
 import random
 import re
 from typing import Any, Iterable
@@ -33,7 +34,7 @@ from syncfit_contracts import (
 from syncfit_core import EngineResult
 from syncfit_core.enums import InferredPhase
 
-from .client import ReasoningClient
+from .client import ReasoningClient, ReasoningProviderUnavailable
 from .loads import apply_baseline_loads
 from .options import objective_scheme
 from .ordering import order_routine
@@ -768,7 +769,7 @@ def _sets_from(role: str, series: int, reps: int, rest: int, weight: float) -> l
 def _clamp(value: object, low: int, high: int, default: int) -> int:
     try:
         number = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     return max(low, min(high, number))
 
@@ -783,6 +784,12 @@ def _entry_from_model_item(
 ) -> dict[str, Any]:
     series = _clamp(item.get("series"), 1, 6, 3)
     reps = _clamp(item.get("reps"), 1, 30, 10)
+    try:
+        weight = float(item.get("weight_suggested_kg", 0.0))
+    except (TypeError, ValueError, OverflowError):
+        weight = 0.0
+    if not math.isfinite(weight) or weight < 0:
+        weight = 0.0
     entry = _entry_from_exercise(
         exercise,
         language,
@@ -790,7 +797,7 @@ def _entry_from_model_item(
         groups,
         series=series,
         reps=reps,
-        weight=item.get("weight_suggested_kg", 0.0),
+        weight=weight,
         rationale=str(item.get("rationale", "")),
         block_supine=block_supine,
     )
@@ -1278,7 +1285,7 @@ class RoutinePlanner:
                 user,
                 session_id=request.session_id,
             )
-        except Exception:
+        except ReasoningProviderUnavailable:
             return skeleton
 
         choices = raw.get("choices") if isinstance(raw, dict) else None
@@ -1286,7 +1293,7 @@ class RoutinePlanner:
             return skeleton
         by_id = {e.id: e for e in catalog}
         for index_str, chosen in choices.items():
-            if str(index_str) not in allowed or chosen not in allowed[str(index_str)]:
+            if not isinstance(chosen, str) or str(index_str) not in allowed or chosen not in allowed[str(index_str)]:
                 continue
             index = int(index_str)
             exercise = by_id.get(str(chosen))
@@ -1361,7 +1368,7 @@ class RoutinePlanner:
                 impact_cap,
             )
             raw = self._client.complete(system, user, session_id=request.session_id)
-            if isinstance(raw, dict) and raw.get("routine"):
+            if isinstance(raw, dict) and isinstance(raw.get("routine"), list) and raw["routine"]:
                 enriched = enforce_prescription(
                     request,
                     core_result,
@@ -1379,7 +1386,7 @@ class RoutinePlanner:
                     if getattr(self._client, "last_model", None) == "gpt-6-luna"
                     else "deepseek"
                 )
-        except Exception:
+        except ReasoningProviderUnavailable:
             enriched = skeleton
             self._last_engine = "deterministic"
 

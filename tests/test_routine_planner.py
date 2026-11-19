@@ -1,6 +1,8 @@
 import json
 
-from syncfit_ai import FakeClient, RoutinePlanner, build_offline_routine, enrich_routine
+import pytest
+
+from syncfit_ai import FakeClient, ReasoningProviderUnavailable, RoutinePlanner, build_offline_routine, enrich_routine
 from syncfit_contracts import RoutineRequest, RoutineResponse, exercises_for_groups
 from syncfit_core import EngineResult
 from syncfit_core.enums import FatigueLevel, InferredPhase, Modality
@@ -134,13 +136,30 @@ def test_planner_reports_gpt6_when_client_used_backup_model():
 def test_planner_returns_deterministic_routine_when_models_fail():
     class FailingClient:
         def complete(self, system_prompt, user_prompt, session_id=None):
-            raise RuntimeError("provider unavailable")
+            raise ReasoningProviderUnavailable("provider unavailable")
 
     core = make_core_result(InferredPhase.FOLLICULAR, k_load=0.95)
     planner = RoutinePlanner(FailingClient())
 
     result = planner.plan(request(["QUADRICEPS"]), core)
 
+    assert result.routine
+    assert planner.last_engine == "deterministic"
+
+
+def test_planner_does_not_fallback_on_programming_errors():
+    class BrokenClient:
+        def complete(self, system_prompt, user_prompt, session_id=None):
+            raise TypeError("unexpected bug")
+
+    planner = RoutinePlanner(BrokenClient())
+    with pytest.raises(TypeError, match="unexpected bug"):
+        planner.plan(request(["QUADRICEPS"]), make_core_result(InferredPhase.FOLLICULAR))
+
+
+def test_malformed_routine_payload_uses_deterministic_plan():
+    planner = RoutinePlanner(FakeClient(response={"routine": 7}))
+    result = planner.plan(request(["QUADRICEPS"]), make_core_result(InferredPhase.FOLLICULAR))
     assert result.routine
     assert planner.last_engine == "deterministic"
 

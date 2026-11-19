@@ -46,7 +46,7 @@ class _Completions:
     def create(self, **kwargs):
         self.calls.append(kwargs)
         if self.fail_json_mode and "response_format" in kwargs:
-            raise RuntimeError("response_format not supported")
+            raise _HttpError(400, "response_format not supported")
         return _Response(self.content)
 
 
@@ -90,8 +90,8 @@ def test_complete_retries_without_json_mode():
 
 
 class _HttpError(Exception):
-    def __init__(self, status_code):
-        super().__init__(f"HTTP {status_code}")
+    def __init__(self, status_code, message=None):
+        super().__init__(message or f"HTTP {status_code}")
         self.status_code = status_code
 
 
@@ -148,7 +148,7 @@ def test_fallback_is_skipped_when_no_time_remains():
         config=config, client=_FakeOpenAI(completions, responses)
     )
 
-    with pytest.raises(_HttpError):
+    with pytest.raises(OpenCodeGoError):
         client.complete("system", "user")
     assert responses.calls == []
 
@@ -162,7 +162,7 @@ def test_non_transient_primary_failure_does_not_use_fallback():
         client=_FakeOpenAI(completions, responses),
     )
 
-    with pytest.raises(_HttpError):
+    with pytest.raises(OpenCodeGoError):
         client.complete("system", "user")
     assert responses.calls == []
 
@@ -233,6 +233,6 @@ def test_no_fallback_when_disabled():
     factory, used = make_factory(json.dumps({"ok": True}), {PRODUCT_BASE_URLS["go"]})
     config = ReasoningConfig(api_key="k", auto_product_fallback=False)
     client = OpenCodeGoClient(config=config, client_factory=factory)
-    with pytest.raises(_AuthError):
+    with pytest.raises(OpenCodeGoError):
         client.complete("system", "user")
     assert used == [PRODUCT_BASE_URLS["go"]]
