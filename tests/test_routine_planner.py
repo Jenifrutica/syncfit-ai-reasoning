@@ -276,3 +276,24 @@ def test_planner_uses_the_symptom_context_and_the_model_warmup():
     assert "overall_pain" in prompt
     # The model's warm-up is used when it is a valid activation/mobility id.
     assert any(entry.exercise_id == "cat-cow" for entry in result.warmup), [entry.exercise_id for entry in result.warmup]
+
+
+def test_enforce_prescription_drops_equipment_the_gym_lacks():
+    from syncfit_ai.routine import build_prescription, enforce_prescription, exercise_required_equipment
+    from syncfit_contracts import get_exercise
+
+    core = make_core_result(InferredPhase.FOLLICULAR, k_load=0.95)
+    req = RoutineRequest(muscle_groups=["QUADRICEPS"], language="EN", exercises_count=3)
+    gym = ["barbell", "machine", "bench"]  # no dumbbells registered
+    skeleton = build_prescription(req, core, equipment_keys=gym)
+    # The model ignores the inventory and proposes two dumbbell exercises.
+    payload = enforce_prescription(
+        req, core, model_output("goblet-squat", "walking-lunge", "leg-extension"), skeleton, equipment_keys=gym
+    )
+    RoutineResponse.model_validate(payload)
+    patterns = {e["movement_pattern"] for e in payload["routine"]}
+    assert {"squat", "lunge", "leg_extension"} <= patterns, patterns  # replaced, not just dropped
+    for routine in (skeleton["routine"], payload["routine"]):
+        for entry in routine:
+            required = exercise_required_equipment(get_exercise(entry["exercise_id"]))
+            assert "dumbbell" not in required, entry["exercise_id"]
