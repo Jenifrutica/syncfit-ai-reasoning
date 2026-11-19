@@ -1,5 +1,7 @@
 # SyncFit AI Reasoning
 
+**Live app:** https://syncfit.jenilarper.dev
+
 Cloud reasoning half of SyncFit Edge: the biomechanical audit kernel that turns the numeric output of [`syncfit-core`](https://github.com/Jenifrutica/syncfit-core) plus the programmed routine into a structured, adapted prescription.
 
 ## Purpose
@@ -288,3 +290,8 @@ against `AIReasoningResponse`/`RoutineResponse`. Tests offline via FakeClient.
 - (Opcional) Tests para `analyze_machine` / `analyze_symptoms`.
 - (Opcional) Usar realmente la `PriorityQueue` exportada.
 - (Opcional) Unificar la versión de `schema_version` en las salidas.
+
+## Data structures
+
+- `LRUCache[K, V]` (ordered dictionary, O(1) get/put): caches audit and routine responses for identical requests.
+- `PriorityQueue[T]` (binary heap) is exported for ordered selection.
